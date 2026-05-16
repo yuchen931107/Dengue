@@ -9,7 +9,7 @@ if __name__ == "__main__":
     
     #1.病例數更新
     print("(1/3)抓取最新確診病例\n")
-    cases_df = get_cases_data()
+    cases_df = get_cases()
     
     #2.weather更新
     print("(2/3)抓取近期氣象觀測\n")
