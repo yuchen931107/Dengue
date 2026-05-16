@@ -29,6 +29,8 @@ jobs:
         run: python update_data.py
         
       - name: Run Test
+        env:
+          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
         run: python test.py
 
       - name: Commit and Push data to branch
