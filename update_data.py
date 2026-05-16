@@ -1,7 +1,7 @@
 import datetime
-from get_forecast_data import get_forecast_data
+from get_cases_data import get_cases_data
 from get_latest_weatrer import get_weather
-from get_modelcsv import get_Mos
+from get_invest_data import get_invest
 
 if __name__ == "__main__":
     print("開始更新資料")
@@ -9,7 +9,7 @@ if __name__ == "__main__":
     
     #1.病例數更新
     print("(1/3)抓取最新確診病例\n")
-    cases_df = get_forecast_data()
+    cases_df = get_cases_data()
     
     #2.weather更新
     print("(2/3)抓取近期氣象觀測\n")
@@ -26,7 +26,7 @@ if __name__ == "__main__":
     weather_df_test=get_weather(tainan_lat_test, tainan_lon_test, start_str, end_str)
     #3.調查資料更新
     print("(3/3)抓取病媒蚊調查紀錄\n")
-    mos_df = get_Mos()
+    mos_df = get_invest()
     
     print("="*50)
     print("所有資料皆已更新完畢！")
