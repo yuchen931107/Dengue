@@ -7,7 +7,7 @@ from datetime import datetime
 # ==========================================
 # 1. 基本設定
 # ==========================================
-API_KEY = "CWA-0908E3D1-9A58-43A9-BBCD-699352344CF7"
+API_KEY = os.environ.get("CWA_API_KEY")
 GITHUB_USER = "yuchen931107"
 REPO_NAME = "Dengue"
 CSV_FILENAME = "Tainan_History_Weather_2010_2026.csv"
