@@ -15,7 +15,7 @@ jobs:
       # 步驟 A：把你的程式碼下載到這台雲端電腦
       - name: Checkout repository
         uses: actions/checkout@v3
-
+        
       # 步驟 B：安裝 Python 與需要的套件
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -23,7 +23,8 @@ jobs:
           python-version: '3.10'
       - name: Install dependencies
         run: |
-          pip install pandas requests
+          python -m pip install --upgrade pip
+          pip install pandas requests urllib3 numpy
 
       # 步驟 C：執行你的主程式！
       - name: Run Update Pipeline
