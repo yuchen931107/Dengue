@@ -16,7 +16,7 @@ CSV_FILENAME = "Tainan_History_Weather_2010_2026.csv"
 RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{REPO_NAME}/data-storage/{CSV_FILENAME}"
 
 # ==========================================
-# 2. 讀取現有的歷史大表
+# 2. 讀取現有的極簡歷史大表 (基底)
 # ==========================================
 try:
     print("⏳ 嘗試從雲端 data-storage 分支讀取現有歷史大表...")
@@ -33,7 +33,7 @@ except Exception as e:
         raise e
 
 # ==========================================
-# 3. 透過 API 撈取【過去 24 小時】最新氣象 (關鍵改動 O-A0003-001)
+# 3. 透過 API 撈取【過去 24 小時】最新氣象
 # ==========================================
 url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={API_KEY}&StationName=臺南"
 
@@ -42,15 +42,16 @@ response = requests.get(url)
 
 if response.status_code == 200:
     data = response.json()
-    station_data = data['records']['Station'][0]
     
-    # 🌟 帥氣回歸！現在可以安全使用這個 24 小時歷史抽屜了
-    obs_records = station_data['StationObsTimes']['StationObsTime']
+    # 🌟 關鍵修正：過去 24 小時的紀錄也是直接平鋪在 'Station' 列表裡！
+    stations = data['records']['Station']
     
     hourly_data = []
-    for record in obs_records:
-        obs_time = record['DateTime']
-        elements = record['WeatherElement']
+    
+    # 用扁平化迴圈直接走訪每一個小時的測站物件
+    for station_data in stations:
+        obs_time = station_data['ObsTime']['DateTime']
+        elements = station_data['WeatherElement']
         
         row = {
             "時間": pd.to_datetime(obs_time),
@@ -73,6 +74,7 @@ if response.status_code == 200:
         '日累積降水量(mm)': 'max' 
     }).reset_index()
     
+    # 自動適應極簡三欄位 [日期, 平均氣溫(℃), 日累積降水量(mm)]
     df_api_daily = df_api_daily[df_history.columns]
     
     # ==========================================
