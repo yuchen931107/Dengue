@@ -1,6 +1,6 @@
 import datetime
 from get_cases_data import get_cases
-#from get_latest_weatrer import get_weather
+from get_latest_weatrer import get_weather
 from get_invest_data import get_invest
 
 if __name__ == "__main__":
@@ -13,7 +13,7 @@ if __name__ == "__main__":
     
     #2.weather更新
     print("(2/3)抓取近期氣象觀測\n")
-
+    get_weather()
     
     #3.調查資料更新
     print("(3/3)抓取病媒蚊調查紀錄\n")
