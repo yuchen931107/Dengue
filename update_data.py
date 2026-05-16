@@ -1,5 +1,5 @@
 import datetime
-from get_cases_data import get_cases_data
+from get_cases_data import get_cases
 from get_latest_weatrer import get_weather
 from get_invest_data import get_invest
 
