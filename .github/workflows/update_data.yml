@@ -2,7 +2,7 @@ name: Daily Dengue Data Update
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '50 15 * * *' # 換算成 UTC 時間 15:50，即台灣時間 23:50
   workflow_dispatch:
 
 jobs:
