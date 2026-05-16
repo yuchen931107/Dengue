@@ -16,7 +16,7 @@ CSV_FILENAME = "Tainan_History_Weather_2010_2026.csv"
 RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{REPO_NAME}/data-storage/{CSV_FILENAME}"
 
 # ==========================================
-# 2. 讀取現有的極簡歷史大表 (基底)
+# 2. 讀取現有的歷史大表
 # ==========================================
 try:
     print("⏳ 嘗試從雲端 data-storage 分支讀取現有歷史大表...")
@@ -28,30 +28,29 @@ except Exception as e:
     if os.path.exists(CSV_FILENAME):
         df_history = pd.read_csv(CSV_FILENAME)
         df_history['日期'] = pd.to_datetime(df_history['日期'])
-        print(f"✅ 成功讀取本機檔案，目前共有 {len(df_history)} 筆紀錄。")
     else:
-        print("❌ 錯誤：找不到任何歷史基底檔案，請確保檔案存在！")
+        print("❌ 錯誤：找不到任何歷史基底檔案！")
         raise e
 
 # ==========================================
-# 3. 透過 API 撈取最新氣象 (觸角)
+# 3. 透過 API 撈取【過去 24 小時】最新氣象 (關鍵改動 O-A0003-001)
 # ==========================================
-start_date = df_history['日期'].max().strftime('%Y-%m-%d')
-time_from_param = f"{start_date}T00:00:00"
+url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={API_KEY}&StationName=臺南"
 
-url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Authorization={API_KEY}&StationName=臺南&timeFrom={time_from_param}"
-
-print(f"⏳ 正在向氣象署 API 請求自 {start_date} 以來的最新觀測資料...")
+print("⏳ 正在向氣象署 API 請求過去 24 小時的完整每小時序列資料...")
 response = requests.get(url)
 
 if response.status_code == 200:
     data = response.json()
-    stations = data['records']['Station']
+    station_data = data['records']['Station'][0]
+    
+    # 🌟 帥氣回歸！現在可以安全使用這個 24 小時歷史抽屜了
+    obs_records = station_data['StationObsTimes']['StationObsTime']
     
     hourly_data = []
-    for station_data in stations:
-        obs_time = station_data['ObsTime']['DateTime']
-        elements = station_data['WeatherElement']
+    for record in obs_records:
+        obs_time = record['DateTime']
+        elements = record['WeatherElement']
         
         row = {
             "時間": pd.to_datetime(obs_time),
@@ -61,12 +60,10 @@ if response.status_code == 200:
         hourly_data.append(row)
         
     df_api_hourly = pd.DataFrame(hourly_data)
-    
-    # 🌟【關鍵破關程式碼】：撕掉 API 的 +08:00 時區標籤，使其格式與歷史 CSV 完美一致
-    df_api_hourly['時間'] = df_api_hourly['時間'].dt.tz_localize(None)
+    df_api_hourly['時間'] = df_api_hourly['時間'].dt.tz_localize(None) # 消除時區衝突
     
     # ==========================================
-    # 4. 將每小時資料聚合(Aggregate)成日資料
+    # 4. 將每小時資料聚合成日資料
     # ==========================================
     print("🧹 正在將 API 每小時資料轉換為日資料格式...")
     df_api_hourly['日期'] = df_api_hourly['時間'].dt.normalize()
@@ -76,7 +73,6 @@ if response.status_code == 200:
         '日累積降水量(mm)': 'max' 
     }).reset_index()
     
-    # 自動適應與對齊歷史表的 [日期, 平均氣溫(℃), 日累積降水量(mm)] 三個欄位
     df_api_daily = df_api_daily[df_history.columns]
     
     # ==========================================
@@ -84,19 +80,14 @@ if response.status_code == 200:
     # ==========================================
     print("🔗 正在合併新舊資料序列並進行去重...")
     df_final = pd.concat([df_history, df_api_daily], ignore_index=True)
-    
-    # 根據「日期」去重，若有重疊，保留最新寫入的 API 資料
     df_final = df_final.drop_duplicates(subset=['日期'], keep='last')
-    
-    # 這次排序絕對不會再卡住了！
     df_final = df_final.sort_values(by='日期').reset_index(drop=True)
     
     # ==========================================
     # 6. 儲存結果
     # ==========================================
     df_final.to_csv(CSV_FILENAME, index=False, encoding="utf-8-sig")
-    print(f"🎉 整合成功！極簡三欄位資料表已更新。")
-    print(f"📅 最新日期為：{df_final['日期'].max().strftime('%Y-%m-%d')}，總筆數：{len(df_final)}")
+    print(f"🎉 整合成功！最新日期已自動無縫補齊至：{df_final['日期'].max().strftime('%Y-%m-%d')}，總筆數：{len(df_final)}")
 
 else:
-    print(f"❌ API 連線失敗，狀態碼: {response.status_code}，本日未更新。")
+    print(f"❌ API 連線失敗，狀態碼: {response.status_code}")
