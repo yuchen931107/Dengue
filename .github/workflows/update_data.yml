@@ -37,8 +37,19 @@ jobs:
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          #把剛抓好的新 CSV 暫時搬到外面，讓工作區變乾淨
+          mkdir -p ../temp_data
+          mv *.csv ../temp_data/ 2>/dev/null || true
+          
+          # 更新雲端地圖，切換到資料分支
           git fetch --all
-          git checkout data-storage
+          git checkout data-storage || git checkout -b data-storage
+          
+          # 把最新鮮的資料搬回來，強行覆蓋掉分支裡的舊資料
+          mv ../temp_data/*.csv . 2>/dev/null || true
+          
+          # 順利提交並推上雲端
           git add *.csv
-          git commit -m "🤖 自動更新: $(date +'%Y-%m-%d')" || exit 0
+          git commit -m "🤖 自動更新資料: $(date +'%Y-%m-%d')" || exit 0
           git push origin data-storage
