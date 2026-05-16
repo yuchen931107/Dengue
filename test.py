@@ -36,7 +36,6 @@ except Exception as e:
 # ==========================================
 # 3. 透過 API 撈取最新氣象 (觸角)
 # ==========================================
-# 設定初始日期為歷史大表最後一天的前兩天
 start_date = df_history['日期'].max().strftime('%Y-%m-%d')
 time_from_param = f"{start_date}T00:00:00"
 
@@ -50,13 +49,10 @@ if response.status_code == 200:
     stations = data['records']['Station']
     
     hourly_data = []
-    
-    # 逐一拆解每一個小時的氣象資料
     for station_data in stations:
         obs_time = station_data['ObsTime']['DateTime']
         elements = station_data['WeatherElement']
         
-        # 配合你的新大表，這裡也只抓氣溫跟雨量
         row = {
             "時間": pd.to_datetime(obs_time),
             "平均氣溫(℃)": float(elements.get('AirTemperature', 0.0)),
@@ -66,19 +62,21 @@ if response.status_code == 200:
         
     df_api_hourly = pd.DataFrame(hourly_data)
     
+    # 🌟【關鍵破關程式碼】：撕掉 API 的 +08:00 時區標籤，使其格式與歷史 CSV 完美一致
+    df_api_hourly['時間'] = df_api_hourly['時間'].dt.tz_localize(None)
+    
     # ==========================================
     # 4. 將每小時資料聚合(Aggregate)成日資料
     # ==========================================
     print("🧹 正在將 API 每小時資料轉換為日資料格式...")
-    df_api_hourly['日期'] = df_api_hourly['時間'].dt.normalize() # 去除時間，只留日期
+    df_api_hourly['日期'] = df_api_hourly['時間'].dt.normalize()
     
-    # 只計算平均氣溫與累積降水量
     df_api_daily = df_api_hourly.groupby('日期').agg({
         '平均氣溫(℃)': 'mean',
         '日累積降水量(mm)': 'max' 
     }).reset_index()
     
-    # 調整欄位順序，完美對齊歷史表的 [日期, 平均氣溫(℃), 日累積降水量(mm)]
+    # 自動適應與對齊歷史表的 [日期, 平均氣溫(℃), 日累積降水量(mm)] 三個欄位
     df_api_daily = df_api_daily[df_history.columns]
     
     # ==========================================
@@ -90,14 +88,14 @@ if response.status_code == 200:
     # 根據「日期」去重，若有重疊，保留最新寫入的 API 資料
     df_final = df_final.drop_duplicates(subset=['日期'], keep='last')
     
-    # 按照日期排序
+    # 這次排序絕對不會再卡住了！
     df_final = df_final.sort_values(by='日期').reset_index(drop=True)
     
     # ==========================================
     # 6. 儲存結果
     # ==========================================
     df_final.to_csv(CSV_FILENAME, index=False, encoding="utf-8-sig")
-    print(f"🎉 整合成功！極簡版資料表已更新。")
+    print(f"🎉 整合成功！極簡三欄位資料表已更新。")
     print(f"📅 最新日期為：{df_final['日期'].max().strftime('%Y-%m-%d')}，總筆數：{len(df_final)}")
 
 else:
