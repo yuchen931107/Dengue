@@ -1,0 +1,49 @@
+name: Daily Dengue Data Update
+
+# 1. 設定觸發條件 (何時執行？)
+on:
+  schedule:
+    # 每天 UTC 0點執行 (大約是台灣時間早上 8 點)
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 保留這個，讓你在網頁上可以隨時點擊「手動執行」測試
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest # 使用 GitHub 免費提供的 Linux 雲端電腦
+
+    steps:
+      # 步驟 A：把你的程式碼下載到這台雲端電腦
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 步驟 B：安裝 Python 與需要的套件
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: |
+          pip install pandas requests
+
+      # 步驟 C：執行你的主程式！
+      - name: Run Update Pipeline
+        run: python update_pipeline.py
+
+      # 步驟 D：最重要的魔法！把生出來的 CSV 丟到 data-storage 分支
+      - name: Commit and Push data to branch
+        run: |
+          # 設定一個虛擬的機器人身分來提交紀錄
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # 切換到我們剛剛建好的資料分支
+          git checkout data-storage
+          
+          # 只把這三個步驟抓下來的 CSV 檔加進去
+          git add *.csv
+          
+          # 提交紀錄 (如果資料沒更新，就不會報錯)
+          git commit -m "🤖 自動更新資料: $(date +'%Y-%m-%d')" || exit 0
+          
+          # 推送上雲端！
+          git push origin data-storage
