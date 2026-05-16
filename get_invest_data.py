@@ -2,7 +2,7 @@ import pandas as pd
 import requests
 import io
 
-def get_Mos():
+def get_invest():
     #https://data.gov.tw/dataset/24159
     csv_url = "https://od.cdc.gov.tw/eic/MosIndex_Tainan.csv" 
     
@@ -18,7 +18,7 @@ def get_Mos():
         response.encoding = 'utf-8-sig' 
         df = pd.read_csv(io.StringIO(response.text))
 
-        df.to_csv("MosIndex_Tainan_Latest.csv", index=False, encoding='utf-8-sig')
+        df.to_csv("Tainan_invest.csv", index=False, encoding='utf-8-sig')
         
         print("資料下載並更新成功！")
         print(f"目前資料總筆數：{len(df):,} 筆")
