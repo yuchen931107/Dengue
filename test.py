@@ -9,7 +9,7 @@ from datetime import datetime
 # ==========================================
 API_KEY = "CWA-0908E3D1-9A58-43A9-BBCD-699352344CF7"
 GITHUB_USER = "yuchen931107"
-REPO_NAME = "dengue-predict"
+REPO_NAME = "Dengue"
 CSV_FILENAME = "Tainan_History_Weather_2010_2026.csv"
 
 # 雲端 data-storage 分支的原始資料網址
