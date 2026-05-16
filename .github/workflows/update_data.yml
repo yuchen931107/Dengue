@@ -27,6 +27,9 @@ jobs:
 
       - name: Run Update Pipeline
         run: python update_data.py
+        
+      - name: Run Test
+        run: python test.py
 
       - name: Commit and Push data to branch
         run: |
