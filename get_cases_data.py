@@ -2,7 +2,7 @@ import pandas as pd
 import requests
 import io
 
-def get_forecast_data():
+def get_cases():
     #疾病管制署資料開放平台
     #https://data.cdc.gov.tw/dataset/dengue-daily-determined-cases-1998/resource/e868ae05-2381-44f2-9656-42292ef7e0c6
     url = "https://od.cdc.gov.tw/eic/Dengue_Daily.csv"
