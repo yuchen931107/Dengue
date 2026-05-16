@@ -47,21 +47,24 @@ response = requests.get(url)
 
 if response.status_code == 200:
     data = response.json()
-    station_data = data['records']['Station'][0]
-    obs_records = station_data['StationObsTimes']['StationObsTime']
     
-    hourly_data = []
-    for record in obs_records:
-        obs_time = record['DateTime']
-        elements = record['WeatherElement']
+    # 🌟 關鍵修正 1：直接拿到所有小時的紀錄列表
+    stations = data['records']['Station']
+    
+    hourly_data = [] # 🌟 關鍵修正 2：初始化清單要放在迴圈外面！
+    
+    # 用迴圈逐一拆解每一個小時的氣象資料
+    for station_data in stations:
+        obs_time = station_data['ObsTime']['DateTime']
+        elements = station_data['WeatherElement']
         
         row = {
             "時間": pd.to_datetime(obs_time),
             "平均氣溫(℃)": float(elements.get('AirTemperature', 0.0)),
             "平均相對溼度(%)": float(elements.get('RelativeHumidity', 0.0)),
+            # 採用我們之前推論出來的 'Now' -> 'Precipitation'
             "日累積降水量(mm)": float(elements.get('Now', {}).get('Precipitation', 0.0))
         }
-        hourly_data = []
         hourly_data.append(row)
         
     df_api_hourly = pd.DataFrame(hourly_data)
@@ -72,14 +75,14 @@ if response.status_code == 200:
     print("🧹 正在將 API 每小時資料轉換為日資料格式...")
     df_api_hourly['日期'] = df_api_hourly['時間'].dt.normalize() # 將時間去掉只留日期
     
-    # 算每日摘要：平均溫、最高溫、最低溫、平均濕度、當天最大累積雨量
+    # 算每日摘要：平均溫、平均濕度、當天最大累積雨量
     df_api_daily = df_api_hourly.groupby('日期').agg({
         '平均氣溫(℃)': 'mean',
         '平均相對溼度(%)': 'mean',
-        '日累積降水量(mm)': 'max' # 氣象署該標籤本身就是當天累積，取 max 即為全天總雨量
+        '日累積降水量(mm)': 'max' 
     }).reset_index()
     
-    # 補上歷史大表需要的其他欄位（API不支援或不重要的欄位補 NaN，確保維度一致）
+    # 補上歷史大表需要的其他欄位（API不支援的欄位補 NaN，確保維度一致）
     df_api_daily['最高氣溫(℃)'] = df_api_hourly.groupby('日期')['平均氣溫(℃)'].transform('max')
     df_api_daily['最低氣溫(℃)'] = df_api_hourly.groupby('日期')['平均氣溫(℃)'].transform('min')
     df_api_daily['降水時數(小時)'] = pd.NA
@@ -90,7 +93,7 @@ if response.status_code == 200:
     df_api_daily = df_api_daily[df_history.columns]
     
     # ==========================================
-    # 5. 新舊資料橫向黏合與去重
+    # 5. 新舊資料橫向黏合與去重 (後面程式碼維持不變...)
     # ==========================================
     print("🔗 正在合併新舊資料序列並進行去重...")
     df_final = pd.concat([df_history, df_api_daily], ignore_index=True)
