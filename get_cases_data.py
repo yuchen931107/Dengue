@@ -22,7 +22,7 @@ def get_forecast_data():
         df_tainan['發病日'] = pd.to_datetime(df_tainan['發病日'])
         df_tainan = df_tainan.sort_values('發病日')
         
-        df_tainan.to_csv("Tainan_data.csv", index=False)
+        df_tainan.to_csv("Tainan_cases_data.csv", index=False)
         
         print(f"成功取得台南市病例資料！共 {len(df_tainan):,} 筆")
         print("最新五筆發病紀錄：")
