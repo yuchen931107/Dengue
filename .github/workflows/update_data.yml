@@ -28,7 +28,7 @@ jobs:
 
       # 步驟 C：執行你的主程式！
       - name: Run Update Pipeline
-        run: python update_pipeline.py
+        run: python update_data.py
 
       # 步驟 D：最重要的魔法！把生出來的 CSV 丟到 data-storage 分支
       - name: Commit and Push data to branch
