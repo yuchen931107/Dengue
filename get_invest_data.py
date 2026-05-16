@@ -18,7 +18,7 @@ def get_invest():
         response.encoding = 'utf-8-sig' 
         df = pd.read_csv(io.StringIO(response.text))
 
-        df.to_csv("Tainan_invest.csv", index=False, encoding='utf-8-sig')
+        df.to_csv("Tainan_invest_data.csv", index=False, encoding='utf-8-sig')
         
         print("資料下載並更新成功！")
         print(f"目前資料總筆數：{len(df):,} 筆")
