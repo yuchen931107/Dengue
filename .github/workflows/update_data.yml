@@ -26,12 +26,9 @@ jobs:
           pip install pandas requests urllib3 numpy
 
       - name: Run Update Pipeline
-        run: python update_data.py
-        
-      - name: Run Test
         env:
           CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
-        run: python test.py
+        run: python update_data.py
 
       - name: Commit and Push data to branch
         run: |
