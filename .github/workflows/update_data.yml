@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: '50 15 * * *' # 換算成 UTC 時間 15:50，即台灣時間 23:50
   workflow_dispatch:
+  
+permissions:
+  contents: write
 
 jobs:
   run-pipeline:
@@ -35,18 +38,23 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           
-          #把剛抓好的新 CSV 暫時搬到外面，讓工作區變乾淨
+          # 1. 暫存新產生的 CSV (請確保路徑正確，如果是子目錄要改成計入子目錄，如 data/*.csv)
           mkdir -p ../temp_data
           mv *.csv ../temp_data/ 2>/dev/null || true
           
-          # 更新雲端地圖，切換到資料分支
-          git fetch --all
-          git checkout data-storage || git checkout -b data-storage
+          # 2. 切換到 data-storage 分支
+          git fetch origin data-storage
+          git checkout data-storage || git checkout -b data-storage origin/data-storage
           
-          # 把最新鮮的資料搬回來，強行覆蓋掉分支裡的舊資料
+          # 3. 把新資料搬回來覆蓋
           mv ../temp_data/*.csv . 2>/dev/null || true
           
-          # 順利提交並推上雲端
+          # 4. 檢查是否有檔案變更，避免被 || exit 0 斷招
           git add *.csv
-          git commit -m "🤖 自動更新資料: $(date +'%Y-%m-%d')" || exit 0
-          git push origin data-storage
+          if git diff --staged --quiet; then
+            echo "--- 沒有偵測到全新資料，跳過 Commit 與 Push ---"
+          else
+            echo "--- 偵測到新資料，開始更新分支 ---"
+            git commit -m "🤖 自動更新資料: $(date +'%Y-%m-%d')"
+            git push origin data-storage
+          fi
