@@ -33,6 +33,9 @@ jobs:
           CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
         run: python update_data.py
 
+      - name: Run Data Merge Pipeline
+        run: python merge_data.py
+        
       - name: Commit and Push data to branch
         run: |
           git config --global user.name 'github-actions[bot]'
