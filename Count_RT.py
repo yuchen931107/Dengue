@@ -122,7 +122,7 @@ def count_RT():
     final_weekly_merged['Mean(R)'] = final_weekly_merged['Mean(R)'].fillna(0.0)
     final_weekly_merged['Quantile.0.025(R)'] = final_weekly_merged['Quantile.0.025(R)'].fillna(0.0)
     final_weekly_merged['Quantile.0.975(R)'] = final_weekly_merged['Quantile.0.975(R)'].fillna(0.0)
-    final_weekly_merged.rename(columns={'date':'Week'}, inplace=True)
+    final_weekly_merged.rename(columns={'Date':'Week'}, inplace=True)
     final_weekly_merged = final_weekly_merged.sort_values(by=['District', 'Date']).reset_index(drop=True)
     final_weekly_merged.to_csv("Tainan_RT.csv", index=False, encoding='utf-8-sig')
     print("處理完成，已輸出 Tainan_RT.csv")
