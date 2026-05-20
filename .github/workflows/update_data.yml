@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests urllib3 numpy xlrd
+          pip install pandas requests urllib3 numpy xlrd epyestim
           
       - name: Run Update Pipeline
         env:
