@@ -93,6 +93,6 @@ model_df = model_df[model_df['Week'] >= '2011-01-01']
 
 # 清理欄位與重新排序
 model_df = model_df.sort_values(['Town', 'Week']).reset_index(drop=True)
-model_df.rename(columns={'平均氣溫(℃)': 'Avg_temp', '日累積降水量(mm)': 'Daily rainfall(mm)','人口密度':'population density'}, inplace=True)
+model_df.rename(columns={'平均氣溫(℃)': 'Avg_Temp', '日累積降水量(mm)': 'rain(mm)','人口密度':'Population density'}, inplace=True)
 
 model_df.to_csv("Tainan_Dengue_ML.csv", index=False, encoding='utf-8-sig')
