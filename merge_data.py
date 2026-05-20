@@ -9,6 +9,7 @@ cases = pd.read_csv("Tainan_cases_data.csv")
 weather = pd.read_csv("Tainan_History_Weather_2010_2026.csv")
 invest = pd.read_csv("Tainan_invest_data.csv")
 pop = pd.read_csv("tainan_population_final.csv")
+rt = pd.read_csv("Tainan_RT.csv")
 
 # ==========================================
 #2.建立連續的「時空網格」底表 (Base Grid)
@@ -92,7 +93,7 @@ model_df['人口密度'] = model_df['人口密度'].fillna(0)
 #7.最終篩選：只保留 2011 年(含)以後的資料
 # ==========================================
 model_df = model_df[model_df['Week'] >= '2011-01-01']
-
+model_df["RT"]=rt["Mean(R)"]
 # 清理欄位與重新排序
 model_df = model_df.sort_values(['Town', 'Week']).reset_index(drop=True)
 model_df.rename(columns={'平均氣溫(℃)': 'Avg_Temp', '日累積降水量(mm)': 'rain(mm)','人口密度':'Population density'}, inplace=True)
