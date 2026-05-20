@@ -93,7 +93,7 @@ model_df['人口密度'] = model_df['人口密度'].fillna(0)
 #7.最終篩選：只保留 2011 年(含)以後的資料
 # ==========================================
 model_df = model_df[model_df['Week'] >= '2011-01-01']
-model_df["RT"]=rt["Mean(R)"]
+
 # 清理欄位與重新排序
 model_df = model_df.sort_values(['Town', 'Week']).reset_index(drop=True)
 model_df.rename(columns={'平均氣溫(℃)': 'Avg_Temp', '日累積降水量(mm)': 'rain(mm)','人口密度':'Population density'}, inplace=True)
