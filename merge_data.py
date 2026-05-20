@@ -77,14 +77,17 @@ pop[['ROC_Year', 'Month']] = pop['年月'].astype(str).str.split('.', expand=Tru
 pop['Year'] = pop['ROC_Year'] + 1911
 pop_clean = pop[['Year', 'Month', '區域別', '人口密度']].rename(columns={'區域別': 'Town'})
 
+# 確保型態正確並去重 (我們上一動修復的程式碼)
 pop_clean['人口密度'] = pd.to_numeric(pop_clean['人口密度'], errors='coerce')
-
-# 如果原本資料是各里的密度，這裡取平均會得出該區的概略密度；如果是重複的總計行，取平均依然是總計。
 pop_clean = pop_clean.groupby(['Year', 'Month', 'Town'])['人口密度'].mean().reset_index()
 
 model_df = pd.merge(model_df, pop_clean, on=['Year', 'Month', 'Town'], how='left')
 
-model_df['人口密度'] = model_df.groupby('Town')['人口密度'].ffill().fillna(0)
+model_df['人口密度'] = model_df.groupby('Town')['人口密度'].ffill()
+
+model_df['人口密度'] = model_df.groupby('Town')['人口密度'].bfill()
+
+model_df['人口密度'] = model_df['人口密度'].fillna(0)
 
 # ==========================================
 #7.最終篩選：只保留 2011 年(含)以後的資料
