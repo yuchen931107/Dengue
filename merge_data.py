@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import itertools
-
+#If 有缺失值會以前一週來補
 # ==========================================
 # 1. 讀取資料
 # ==========================================
@@ -16,7 +16,7 @@ pop = pd.read_csv("tainan_population_final.csv")
 towns = pop['區域別'].dropna().unique()
 towns = [t for t in towns if t != '總計']
 
-#保持從 2010 年開始建網格，為了讓後面 2011 年初的 Lag 特徵有前置資料可抓
+#設定時間
 date_range = pd.date_range(start='2010-01-01', end='2025-12-31', freq='W-MON')
 
 grid = list(itertools.product(date_range, towns))
@@ -77,7 +77,6 @@ pop[['ROC_Year', 'Month']] = pop['年月'].astype(str).str.split('.', expand=Tru
 pop['Year'] = pop['ROC_Year'] + 1911
 pop_clean = pop[['Year', 'Month', '區域別', '人口密度']].rename(columns={'區域別': 'Town'})
 
-# 確保型態正確並去重 (我們上一動修復的程式碼)
 pop_clean['人口密度'] = pd.to_numeric(pop_clean['人口密度'], errors='coerce')
 pop_clean = pop_clean.groupby(['Year', 'Month', 'Town'])['人口密度'].mean().reset_index()
 
