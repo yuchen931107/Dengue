@@ -93,6 +93,7 @@ model_df = model_df[model_df['Week'] >= '2011-01-01']
 
 # 清理欄位與重新排序
 model_df = model_df.sort_values(['Town', 'Week']).reset_index(drop=True)
+model_df.rename(columns={'平均氣溫(℃)': 'Avg_temp', '日累積降水量(mm)': 'Daily rainfall(mm)','人口密度':'population density'}, inplace=True)
 
 # 顯示產出資料格式與資料集大小
 print("篩選後資料區間:", model_df['Week'].min().date(), "至", model_df['Week'].max().date())
