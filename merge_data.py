@@ -10,7 +10,7 @@ weather = pd.read_csv("Tainan_History_Weather_2010_2026.csv")
 invest = pd.read_csv("Tainan_invest_data.csv")
 pop = pd.read_csv("tainan_population_final.csv")
 rt = pd.read_csv("Tainan_RT.csv")
-rt_subset = rt[['Week','Mean(R)']]
+rt_subset = rt[['Week','Town','Mean(R)']]
 # ==========================================
 #2.建立連續的「時空網格」底表 (Base Grid)
 # ==========================================
@@ -88,12 +88,16 @@ model_df['人口密度'] = model_df.groupby('Town')['人口密度'].ffill()
 model_df['人口密度'] = model_df.groupby('Town')['人口密度'].bfill()
 
 model_df['人口密度'] = model_df['人口密度'].fillna(0)
-
+#=======================================================
+model_df['Week'] = pd.to_datetime(model_df['Week'])
+rt_subset['Week'] = pd.to_datetime(rt_subset['Week'])
+model_df = pd.merge(model_df,rt_subset,on=['Week', 'Town'],how='left')
+model_df.rename(columns={'Mean(R)': 'RT'}, inplace=True)
+#===========================================================
 # ==========================================
 #7.最終篩選：只保留 2011 年(含)以後的資料
 # ==========================================
 model_df = model_df[model_df['Week'] >= '2011-01-01']
-model_df=pd.merge(model_df,rt_subset, on=['Week', 'Town'], how='left')
 # 清理欄位與重新排序
 model_df = model_df.sort_values(['Town', 'Week']).reset_index(drop=True)
 model_df.rename(columns={'平均氣溫(℃)': 'Avg_Temp', '日累積降水量(mm)': 'rain(mm)','人口密度':'Population density'}, inplace=True)
