@@ -4,8 +4,12 @@ Town                object   區域
 Year                int64    年份
 Month               int64    月份
 Case_Count          float64  病例數(Target)
-Avg_Temp            float64  平均氣溫
-rain(mm)            float64  降雨量
+AvgTemp             float64  平均氣溫
+TempRange           float64  溫差
+AvgHumidity         float64  平均相對溼度
+SunshineHours       float64  日照時數
+RainfallHours       float64  降雨時數
+Rainfall            float64  降雨量
 BI                  float64  布式指數
 CI                  float64  容器指數
 HI                  float64  住宅指數
