@@ -4,7 +4,7 @@ import os
 import json
 from datetime import datetime
 
-def get_latest_weather():
+def get_weather():
     # ==========================================
     # 1. 基本設定
     # ==========================================
