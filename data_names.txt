@@ -6,8 +6,14 @@ Month               int64    月份
 Case_Count          float64  病例數(Target)
 Avg_Temp            float64  平均氣溫
 rain(mm)            float64  降雨量
-Temp_Lag2W          float64  平均氣溫(2週前)
-Rain_Lag4W          float64  降雨量(2週前)
-Avg_BI              float64  布式指數
-Avg_BI_Lag2W        float64  布式指數(2週前)
+BI                  float64  布式指數
+CI                  float64  容器指數
+HI                  float64  住宅指數
+LI                  float64  幼蟲指數
+AI                  float64  成蟲指數
+PI                  float64  蛹指數
+Con100HH            float64  每百戶積水容器數
 Population density  float64  人口密度
+RT                  float64  RT值
+
+計算方式參考:https://od.cdc.gov.tw/eic/MosIndex_CodeBook.pdf
