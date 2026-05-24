@@ -45,30 +45,27 @@ weather_agg = weather.groupby('Week').agg({
     '平均氣溫(℃)': 'mean',
     '日累積降水量(mm)': 'sum'
 }).reset_index()
-weather_agg['Temp_Lag2W'] = weather_agg['平均氣溫(℃)'].shift(2)
-weather_agg['Temp_Lag4W'] = weather_agg['平均氣溫(℃)'].shift(4)
-weather_agg['Temp_Lag6W'] = weather_agg['平均氣溫(℃)'].shift(6)
-weather_agg['Temp_Lag8W'] = weather_agg['平均氣溫(℃)'].shift(8)
-weather_agg['Rain_Lag2W'] = weather_agg['日累積降水量(mm)'].shift(2)
-weather_agg['Rain_Lag4W'] = weather_agg['日累積降水量(mm)'].shift(4)
-weather_agg['Rain_Lag6W'] = weather_agg['日累積降水量(mm)'].shift(6)
-weather_agg['Rain_Lag8W'] = weather_agg['日累積降水量(mm)'].shift(8)
+for i in range(2,9,2):
+    weather_agg[f'Temp_Lag{i}W'] = weather_agg['平均氣溫(℃)'].shift(i)
+    weather_agg[f'Rain_Lag{i}W'] = weather_agg['日累積降水量(mm)'].shift(i)
 model_df = pd.merge(model_df, weather_agg, on='Week', how='left')
 # ==========================================
 #5.處理「特徵 X」: 病媒蚊指數 (包含 Lag 與 Ffill)
 # ==========================================
+metrics = ['BI', 'CI', 'HI', 'LI', 'AI', 'PI', 'Con100HH']
 invest['Date'] = pd.to_datetime(invest['Date'])
 invest['Week'] = invest['Date'].dt.to_period('W').dt.start_time
-
-invest_agg = invest.groupby(['Week', 'Town'])['BI'].mean().reset_index(name='Avg_BI')
+invest_agg = invest.groupby(['Week', 'Town'])[metrics].mean().reset_index()
 invest_agg = invest_agg.sort_values(['Town', 'Week'])
-invest_agg['Avg_BI_Lag2W'] = invest_agg.groupby('Town')['Avg_BI'].shift(2)
-
+for col in metrics:
+    invest_agg[f'{col}_Lag2W'] = invest_agg.groupby('Town')[f'{col}'].shift(2)
 model_df = pd.merge(model_df, invest_agg, on=['Week', 'Town'], how='left')
-
-#利用 2010 年的資料往下填補 2011 年初可能缺失的調查紀錄
-model_df['Avg_BI'] = model_df.groupby('Town')['Avg_BI'].ffill().fillna(0)
-model_df['Avg_BI_Lag2W'] = model_df.groupby('Town')['Avg_BI_Lag2W'].ffill().fillna(0)
+for col in metrics:
+    # 填補當週平均
+    model_df[f'{col}'] = model_df.groupby('Town')[f'{col}'].ffill().fillna(0)
+    # 填補前兩週平均
+    model_df[f'{col}_Lag2W'] = model_df.groupby('Town')[f'{col}_Lag2W'].ffill().fillna(0)
+model_df.info()
 #北門、南化、善化、學甲、官田、將軍、山上、左鎮、玉井少很多資料
 # ==========================================
 # 6.處理「特徵 X」: 人口密度
@@ -96,6 +93,9 @@ model_df.rename(columns={'Mean(R)': 'RT'}, inplace=True)
 model_df = model_df[model_df['Week'] >= '2011-01-01']
 # 清理欄位與重新排序
 model_df = model_df.sort_values(['Town', 'Week']).reset_index(drop=True)
-model_df.rename(columns={'平均氣溫(℃)': 'Avg_Temp', '日累積降水量(mm)': 'rain(mm)','人口密度':'Population density'}, inplace=True)
+model_df.rename(columns={'平均氣溫(℃)': 'Avg_Temp',
+                         '日累積降水量(mm)':'rain(mm)',
+                         '人口密度':'Population density',
+                         'Avg_BI':'BI','Avg_BI_Lag2W':'BI_lag2W'}, inplace=True)
 model_df.to_csv("Tainan_Dengue_ML.csv", index=False, encoding='utf-8-sig')
 model_df.info()
