@@ -9,14 +9,15 @@ weather = pd.read_csv("Tainan_History_Weather_2010_2026.csv")
 invest = pd.read_csv("Tainan_invest_data.csv")
 pop = pd.read_csv("tainan_population_final.csv")
 rt = pd.read_csv("Tainan_RT.csv")
-rt_subset = rt[['Week','Town','Mean(R)']]
+rt_subset = rt[['Week','Town','Mean(R)']].copy()
+end_date = pd.Timestamp.today().normalize() - pd.Timedelta(days=7)
 # ==========================================
 #2.建立連續的「時空網格」底表 (Base Grid)
 # ==========================================
 towns = pop['區域別'].dropna().unique()
 towns = [t for t in towns if t != '總計']
 #設定時間
-date_range = pd.date_range(start='2010-1-1', end='2025-12-31', freq='W-MON')
+date_range = pd.date_range(start='2010-1-1', end=end_date, freq='W-MON')
 grid = list(itertools.product(date_range, towns))
 base_df = pd.DataFrame(grid, columns=['Week', 'Town'])
 base_df['Year'] = base_df['Week'].dt.year
@@ -88,9 +89,10 @@ rt_subset['Week'] = pd.to_datetime(rt_subset['Week'])
 model_df = pd.merge(model_df,rt_subset,on=['Week', 'Town'],how='left')
 model_df.rename(columns={'Mean(R)': 'RT'}, inplace=True)
 # ==========================================
-#8.最終篩選：只保留 2011 年(含)以後的資料
+#8.最終篩選
 # ==========================================
-model_df = model_df[model_df['Week'] >= '2011-01-01']
+model_newest=model_df[model_df['Week'] >= '2011-01-01']
+model_df = model_df[model_df['Week'].between('2011-01-01', '2025-12-31')]
 # 清理欄位與重新排序
 model_df = model_df.sort_values(['Town', 'Week']).reset_index(drop=True)
 model_df.rename(columns={'平均氣溫(℃)': 'Avg_Temp',
@@ -98,4 +100,4 @@ model_df.rename(columns={'平均氣溫(℃)': 'Avg_Temp',
                          '人口密度':'Population density',
                          'Avg_BI':'BI','Avg_BI_Lag2W':'BI_lag2W'}, inplace=True)
 model_df.to_csv("Tainan_Dengue_ML.csv", index=False, encoding='utf-8-sig')
-model_df.info()
+model_newest.to_csv("Tainan_Dengue_ML_newest.csv", index=False, encoding='utf-8-sig')
