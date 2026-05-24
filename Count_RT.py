@@ -80,8 +80,8 @@ def count_RT():
     # 5.關鍵需求：篩選 2011 到 2025 的資料來畫圖與儲存
     # ==========================================
     final_df_filtered = final_df[
-        (final_df['Date'] >= '2011-01-01') & 
-        (final_df['Date'] <= '2025-12-29')
+        (final_df['Date'] >= global_start) & 
+        (final_df['Date'] <= global_end)
     ].copy()
     
     print("\n正在將每日 Rt 轉換為每週平均 Rt...")
@@ -130,4 +130,3 @@ def count_RT():
     print("處理完成，已輸出 Tainan_RT.csv")
     
     return final_weekly_merged
-
