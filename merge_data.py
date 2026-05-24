@@ -41,15 +41,32 @@ model_df['Case_Lag3W'] = model_df.groupby('Town')['Case_Count'].shift(3)
 # ==========================================
 weather['日期'] = pd.to_datetime(weather['日期'])
 weather['Week'] = weather['日期'].dt.to_period('W').dt.start_time
-
 weather_agg = weather.groupby('Week').agg({
     '平均氣溫(℃)': 'mean',
+    '溫差(℃)': 'mean',
+    '平均相對溼度(%)': 'mean',
+    '日照時數(小時)': 'sum',
+    '降水時數(小時)': 'sum',
     '日累積降水量(mm)': 'sum'
-}).reset_index()
-for i in range(2,9,2):
-    weather_agg[f'Temp_Lag{i}W'] = weather_agg['平均氣溫(℃)'].shift(i)
-    weather_agg[f'Rain_Lag{i}W'] = weather_agg['日累積降水量(mm)'].shift(i)
+}).reset_index().rename(columns={
+    '平均氣溫(℃)': 'AvgTemp', '溫差(℃)': 'TempRange',
+    '平均相對溼度(%)': 'AvgHumidity', '日照時數(小時)': 'SunshineHours',
+    '降水時數(小時)': 'RainfallHours', '日累積降水量(mm)': 'Rainfall'
+})
+
+for i in range(2, 9, 2):
+    weather_agg[f'Temp_Lag{i}W'] = weather_agg['AvgTemp'].shift(i)
+    weather_agg[f'Rain_Lag{i}W'] = weather_agg['Rainfall'].shift(i)
+
 model_df = pd.merge(model_df, weather_agg, on='Week', how='left')
+
+# 欄位排序
+weather_cols_base = ['AvgTemp', 'TempRange', 'AvgHumidity', 'SunshineHours', 'RainfallHours', 'Rainfall']
+weather_cols_lag  = [f'Temp_Lag{i}W' for i in range(2, 9, 2)] + \
+                    [f'Rain_Lag{i}W' for i in range(2, 9, 2)]
+
+other_cols = [c for c in model_df.columns if c not in weather_cols_base + weather_cols_lag]
+model_df = model_df[other_cols + weather_cols_base + weather_cols_lag]
 # ==========================================
 #5.處理「特徵 X」: 病媒蚊指數 (包含 Lag 與 Ffill)
 # ==========================================
@@ -66,7 +83,6 @@ for col in metrics:
     model_df[f'{col}'] = model_df.groupby('Town')[f'{col}'].ffill().fillna(0)
     # 填補前兩週平均
     model_df[f'{col}_Lag2W'] = model_df.groupby('Town')[f'{col}_Lag2W'].ffill().fillna(0)
-model_df.info()
 #北門、南化、善化、學甲、官田、將軍、山上、左鎮、玉井少很多資料
 # ==========================================
 # 6.處理「特徵 X」: 人口密度
@@ -101,3 +117,5 @@ model_df.rename(columns={'平均氣溫(℃)': 'Avg_Temp',
                          'Avg_BI':'BI','Avg_BI_Lag2W':'BI_lag2W'}, inplace=True)
 model_df.to_csv("Tainan_Dengue_ML.csv", index=False, encoding='utf-8-sig')
 model_newest.to_csv("Tainan_Dengue_ML_newest.csv", index=False, encoding='utf-8-sig')
+model_df.info()
+model_newest.info()
