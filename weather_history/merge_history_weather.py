@@ -100,16 +100,27 @@ if all_years_data:
     num_cols = ["平均氣溫(℃)", "最高氣溫(℃)", "最低氣溫(℃)", "平均相對溼度(%)", "降水時數(小時)", "日照時數(小時)", "平均風速(m/s)"]
     for col in num_cols:
         df_all_combined[col] = pd.to_numeric(df_all_combined[col], errors="coerce")
-        
+    
+    df_all_combined["溫差(℃)"] = df_all_combined["最高氣溫(℃)"] - df_all_combined["最低氣溫(℃)"]
+    df_all_combined["溫差(℃)"] = df_all_combined["溫差(℃)"].round(1)
+    
     #依照日期排序，確保時間序列正確
     df_all_combined = df_all_combined.sort_values(by="日期").reset_index(drop=True)
-    df_all_combined = df_all_combined[['日期','平均氣溫(℃)','日累積降水量(mm)']]
+    df_all_combined = df_all_combined[[
+        '日期',
+        '平均氣溫(℃)',
+        '溫差(℃)',
+        '平均相對溼度(%)',
+        '日照時數(小時)',
+        '降水時數(小時)',
+        '日累積降水量(mm)'
+    ]]
     
     print("\n全年份歷史資料合併成功！")
     print(f"總資料筆數（天數）：{len(df_all_combined)} 筆")
     print(f"時間區間：{df_all_combined['日期'].min().strftime('%Y-%m-%d')} ~ {df_all_combined['日期'].max().strftime('%Y-%m-%d')}")
     
-    # 8. 匯出成最終版歷史氣象大表
+    # 8. 匯出成歷史氣象大表
     output_filename = "Tainan_History_Weather_2010_2026.csv"
     df_all_combined.to_csv(output_filename, index=False, encoding="utf-8-sig")
     print(f"歷史大基底已成功存為：{output_filename}")
