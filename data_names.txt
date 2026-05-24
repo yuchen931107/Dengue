@@ -15,5 +15,6 @@ PI                  float64  蛹指數
 Con100HH            float64  每百戶積水容器數
 Population density  float64  人口密度
 RT                  float64  RT值
+(lag代表k週前資料)
 
 計算方式參考:https://od.cdc.gov.tw/eic/MosIndex_CodeBook.pdf
