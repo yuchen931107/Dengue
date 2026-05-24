@@ -3,6 +3,7 @@ import requests
 import io
 
 def get_invest():
+    #變數https://od.cdc.gov.tw/eic/MosIndex_CodeBook.pdf
     #https://data.gov.tw/dataset/24159
     csv_url = "https://od.cdc.gov.tw/eic/MosIndex_Tainan.csv" 
     
