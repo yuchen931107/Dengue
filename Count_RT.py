@@ -1,14 +1,10 @@
 import pandas as pd
-import urllib.parse
 import numpy as np
 from scipy.stats import gamma
 import epyestim.estimate_r
 
 def count_RT():
-    raw_url = "https://github.com/yuchen931107/Dengue/raw/refs/heads/data-storage/Tainan_cases_data.csv"
-    safe_url = urllib.parse.quote(raw_url, safe=':/?=')
-    
-    df = pd.read_csv(safe_url)
+    df = pd.read_csv("Tainan_cases_data.csv")
     print("資料載入成功，基本資訊如下：")
     df.info()
     
