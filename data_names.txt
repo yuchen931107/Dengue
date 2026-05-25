@@ -3,7 +3,7 @@ Week                object   週次
 Town                object   區域
 Year                int64    年份
 Month               int64    月份
-Case_Count          float64  病例數(Target)
+Case_Count          float64  病例數
 AvgTemp             float64  平均氣溫
 TempRange           float64  溫差
 AvgHumidity         float64  平均相對溼度
