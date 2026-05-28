@@ -17,7 +17,7 @@ LI                  float64  幼蟲指數
 AI                  float64  成蟲指數
 PI                  float64  蛹指數
 Con100HH            float64  每百戶積水容器數
-RT                  float64  RT值
+RT_level            float64  RT等級(target)
 (lag代表k週前資料)
 
 計算方式參考:https://od.cdc.gov.tw/eic/MosIndex_CodeBook.pdf
