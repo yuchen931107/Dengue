@@ -1,8 +1,9 @@
 import pandas as pd
 import itertools
-#If 有缺失值會以前一週來補
+from RT_split import RT_split
+#If 有缺失值會以0來補
 # ==========================================
-# 1. 讀取資料
+#1.讀取資料
 # ==========================================
 cases = pd.read_csv("Tainan_cases_data.csv")
 weather = pd.read_csv("Tainan_History_Weather_2010_2026.csv")
@@ -12,7 +13,7 @@ rt = pd.read_csv("Tainan_RT.csv")
 rt_subset = rt[['Week','Town','Mean(R)']].copy()
 end_date = pd.Timestamp.today().normalize() - pd.Timedelta(days=7)
 # ==========================================
-#2.建立連續的「時空網格」底表 (Base Grid)
+#2.建立連續的底表
 # ==========================================
 towns = pop['區域別'].dropna().unique()
 towns = [t for t in towns if t != '總計']
@@ -33,9 +34,11 @@ model_df = pd.merge(base_df, cases_agg, left_on=['Week', 'Town'], right_on=['Wee
 model_df['Case_Count'] = model_df['Case_Count'].fillna(0)
 model_df = model_df.drop(columns=['居住鄉鎮'])
 model_df = model_df.sort_values(['Town', 'Week'])
+'''
 model_df['Case_Lag1W'] = model_df.groupby('Town')['Case_Count'].shift(1)
 model_df['Case_Lag2W'] = model_df.groupby('Town')['Case_Count'].shift(2)
 model_df['Case_Lag3W'] = model_df.groupby('Town')['Case_Count'].shift(3)
+'''
 # ==========================================
 #4.處理「特徵 X」: 天氣資料 (包含 Lag)
 # ==========================================
@@ -53,57 +56,64 @@ weather_agg = weather.groupby('Week').agg({
     '平均相對溼度(%)': 'AvgHumidity', '日照時數(小時)': 'SunshineHours',
     '降水時數(小時)': 'RainfallHours', '日累積降水量(mm)': 'Rainfall'
 })
-
+'''
 for i in range(2, 9, 2):
     weather_agg[f'Temp_Lag{i}W'] = weather_agg['AvgTemp'].shift(i)
     weather_agg[f'Rain_Lag{i}W'] = weather_agg['Rainfall'].shift(i)
-
+'''
 model_df = pd.merge(model_df, weather_agg, on='Week', how='left')
 
 # 欄位排序
 weather_cols_base = ['AvgTemp', 'TempRange', 'AvgHumidity', 'SunshineHours', 'RainfallHours', 'Rainfall']
+
+'''
 weather_cols_lag  = [f'Temp_Lag{i}W' for i in range(2, 9, 2)] + \
                     [f'Rain_Lag{i}W' for i in range(2, 9, 2)]
-
 other_cols = [c for c in model_df.columns if c not in weather_cols_base + weather_cols_lag]
 model_df = model_df[other_cols + weather_cols_base + weather_cols_lag]
+'''
+other_cols = [c for c in model_df.columns if c not in weather_cols_base]
+model_df = model_df[other_cols + weather_cols_base ]
+
 # ==========================================
-#5.處理「特徵 X」: 病媒蚊指數 (包含 Lag 與 Ffill)
+#5.處理「特徵 X」: 病媒蚊指數 (包含 Lag 與 fill0)
 # ==========================================
 metrics = ['BI', 'CI', 'HI', 'LI', 'AI', 'PI', 'Con100HH']
 invest['Date'] = pd.to_datetime(invest['Date'])
 invest['Week'] = invest['Date'].dt.to_period('W').dt.start_time
 invest_agg = invest.groupby(['Week', 'Town'])[metrics].mean().reset_index()
 invest_agg = invest_agg.sort_values(['Town', 'Week'])
+'''
 for col in metrics:
     invest_agg[f'{col}_Lag2W'] = invest_agg.groupby('Town')[f'{col}'].shift(2)
+'''
 model_df = pd.merge(model_df, invest_agg, on=['Week', 'Town'], how='left')
 for col in metrics:
-    # 填補當週平均
-    model_df[f'{col}'] = model_df.groupby('Town')[f'{col}'].ffill().fillna(0)
-    # 填補前兩週平均
-    model_df[f'{col}_Lag2W'] = model_df.groupby('Town')[f'{col}_Lag2W'].ffill().fillna(0)
+    model_df[f'{col}'] = model_df[f'{col}'].fillna(0)
+    #model_df[f'{col}_Lag2W'] = model_df[f'{col}_Lag2W'].fillna(0)
 #北門、南化、善化、學甲、官田、將軍、山上、左鎮、玉井少很多資料
 # ==========================================
-# 6.處理「特徵 X」: 人口密度
+'''
+#6.處理「特徵 X」: 人口密度
 # ==========================================
 pop[['ROC_Year', 'Month']] = pop['年月'].astype(str).str.split('.', expand=True).astype(int)
 pop['Year'] = pop['ROC_Year'] + 1911
 pop_clean = pop[['Year', 'Month', '區域別', '人口密度']].rename(columns={'區域別': 'Town'})
 pop_clean['人口密度'] = pd.to_numeric(pop_clean['人口密度'], errors='coerce')
 pop_clean = pop_clean.groupby(['Year', 'Month', 'Town'])['人口密度'].mean().reset_index()
-
 model_df = pd.merge(model_df, pop_clean, on=['Year', 'Month', 'Town'], how='left')
 model_df['人口密度'] = model_df.groupby('Town')['人口密度'].ffill()
 model_df['人口密度'] = model_df.groupby('Town')['人口密度'].bfill()
 model_df['人口密度'] = model_df['人口密度'].fillna(0)
 # ==========================================
-# 7.計算RT
+'''
+#7.計算RT 及 level
 # ==========================================
-#model_df['Week'] = pd.to_datetime(model_df['Week'])
 rt_subset['Week'] = pd.to_datetime(rt_subset['Week'])
 model_df = pd.merge(model_df,rt_subset,on=['Week', 'Town'],how='left')
 model_df.rename(columns={'Mean(R)': 'RT'}, inplace=True)
+model_df = RT_split(model_df, rt_column='RT', new_column='RT_level')
+model_df = model_df.drop(columns=["RT"])
 # ==========================================
 #8.最終篩選
 # ==========================================
@@ -113,9 +123,9 @@ model_df = model_df[model_df['Week'].between('2011-01-01', '2025-12-31')]
 model_df = model_df.sort_values(['Town', 'Week']).reset_index(drop=True)
 model_df.rename(columns={'平均氣溫(℃)': 'Avg_Temp',
                          '日累積降水量(mm)':'rain(mm)',
-                         '人口密度':'Population density',
-                         'Avg_BI':'BI','Avg_BI_Lag2W':'BI_lag2W'}, inplace=True)
+                         '人口密度':'Population density'}, inplace=True)
 model_df.to_csv("Tainan_Dengue_ML.csv", index=False, encoding='utf-8-sig')
 model_newest.to_csv("Tainan_Dengue_ML_newest.csv", index=False, encoding='utf-8-sig')
 model_df.info()
 model_newest.info()
+#newest_RT有bug之後修
