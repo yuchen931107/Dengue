@@ -17,7 +17,6 @@ LI                  float64  幼蟲指數
 AI                  float64  成蟲指數
 PI                  float64  蛹指數
 Con100HH            float64  每百戶積水容器數
-Population density  float64  人口密度
 RT                  float64  RT值
 (lag代表k週前資料)
 
