@@ -26,12 +26,13 @@ train、test切分用2023當基準 train(初始-2022) test(2023-底)
 1.全部變數做standardscaler 標準化 (不要用minmax)
 2.變數皆不轉換直接建模
 比較標準化是否有差異
-print出你們的confusion matrix、recall、f1-score值等數據
+
 (時間序列組用case_count做target、也可試著預測RT_level但不確定能否成功)
 (機器學習、深度學習用RT_level做target)
 '''
-lag變數被我移除了如果需要sample在這你們再補上去:
+lag、人口密度變數被我移除了如果需要sample在這你們再補上去:
 df['需轉換lag之變數'] = df.groupby('Town')['需轉換lag之變數'].shift(k)
 '''
+print出你們的confusion matrix、recall、f1-score值等數據(如果是時間序列組預測病例數就prtint出R-square mse等指標) 給陳彥叡寫報告
 
 計算方式參考:https://od.cdc.gov.tw/eic/MosIndex_CodeBook.pdf
