@@ -113,7 +113,6 @@ rt_subset['Week'] = pd.to_datetime(rt_subset['Week'])
 model_df = pd.merge(model_df,rt_subset,on=['Week', 'Town'],how='left')
 model_df.rename(columns={'Mean(R)': 'RT'}, inplace=True)
 model_df = RT_split(model_df, rt_column='RT', new_column='RT_level')
-model_df = model_df.drop(columns=["RT"])
 # ==========================================
 #8.最終篩選
 # ==========================================
