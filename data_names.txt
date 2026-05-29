@@ -29,5 +29,9 @@ train、test切分用2023當基準 train(初始-2022) test(2023-底)
 print出你們的confusion matrix、recall、f1-score值等數據
 (時間序列組用case_count做target、也可試著預測RT_level但不確定能否成功)
 (機器學習、深度學習用RT_level做target)
+'''
+lag變數被我移除了如果需要sample在這你們再補上去:
+df['需轉換lag之變數'] = df.groupby('Town')['需轉換lag之變數'].shift(k)
+'''
 
 計算方式參考:https://od.cdc.gov.tw/eic/MosIndex_CodeBook.pdf
