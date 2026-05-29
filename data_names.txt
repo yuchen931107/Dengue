@@ -18,6 +18,16 @@ AI                  float64  成蟲指數
 PI                  float64  蛹指數
 Con100HH            float64  每百戶積水容器數
 RT_level            float64  RT等級(target)
-(lag代表k週前資料)
+
+遺失值已處理完畢
+你們讀取df後先將變數 Month 、 Town做one-hot-encoding
+train、test切分用2023當基準 train(初始-2022) test(2023-底)
+需做出兩個模型:
+1.全部變數做standardscaler 標準化 (不要用minmax)
+2.變數皆不轉換直接建模
+比較標準化是否有差異
+print出你們的confusion matrix、recall、f1-score值等數據
+(時間序列組用case_count做target、也可試著預測RT_level但不確定能否成功)
+(機器學習、深度學習用RT_level做target)
 
 計算方式參考:https://od.cdc.gov.tw/eic/MosIndex_CodeBook.pdf
