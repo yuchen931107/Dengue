@@ -6,7 +6,6 @@ import epyestim.estimate_r
 def count_RT():
     df = pd.read_csv("Tainan_cases_data.csv")
     print("資料載入成功，基本資訊如下：")
-    df.info()
     
     # 2. 【核心欄位設定】
     # ==========================================
