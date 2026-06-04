@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import json
 from datetime import datetime
+from scraperapi import fetch_data
 
 def get_weather():
     # ==========================================
@@ -63,10 +64,21 @@ def get_weather():
     # ==========================================
     # 3. 呼叫「過去歷史觀測 API」
     # ==========================================
+    if not df_history.empty:
+        df_history.to_csv(CSV_FILENAME, index=False, encoding="utf-8-sig")
+        print("已先保留天氣歷史資料，後續 API 失敗時仍可供合併使用。")
+
     url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/C-B0024-001?Authorization={API_KEY}&StationName=臺南"
     
-    print("正在向氣象署請求過去 30 天的完整歷史序列資料...")
-    response = requests.get(url)
+    print("正在透過 ScraperAPI 代理向氣象署請求過去 30 天的完整歷史序列資料...")
+    
+    # 【修改】使用 try-except 包覆我們的 fetch_data，取代原本的 requests.get
+    try:
+        response = fetch_data(url)
+    except Exception as e:
+        print(f"❌ API 代理連線或重試失敗: {e}")
+        print("將直接回傳已有的歷史資料。")
+        return df_history
     
     if response.status_code == 200:
         data = response.json()
@@ -76,7 +88,7 @@ def get_weather():
         
         if not stations:
             print("找不到測站欄位，API 實際的根目錄包含：", records.keys())
-            return
+            return df_history
             
         hourly_data = []
         
@@ -137,7 +149,7 @@ def get_weather():
         if not hourly_data:
             print("無法從 JSON 中萃取出所需欄位。以下為氣象署 API 回傳的真實第一筆結構：")
             print(json.dumps(stations[0] if stations else data, indent=2, ensure_ascii=False)[:1000])
-            return
+            return df_history
             
         df_api_hourly = pd.DataFrame(hourly_data)
         df_api_hourly['時間'] = df_api_hourly['時間'].dt.tz_localize(None)
@@ -194,4 +206,5 @@ def get_weather():
         return df_final
         
     else:
-        print(f"API 連線失敗，錯誤碼: {response.status_code}")
+        print(f"API 回傳狀態碼異常: {response.status_code}")
+        return df_history
