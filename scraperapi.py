@@ -4,15 +4,14 @@ import time
 
 def fetch_data(target_url):
     """透過 ScraperAPI 抓取資料的工具"""
-    #api_key = os.getenv("SCRAPERAPI_KEY")
-    api_key = "0bc25e389504b45235f5677592a1b8b1"
+    api_key = os.getenv("SCRAPERAPI_KEY")
     payload = {
         'api_key': api_key,
         'url': target_url,
         'country_code': 'tw', 
         'premium': 'true' 
     }
-    #api_key = "0bc25e389504b45235f5677592a1b8b1"
+    
     max_retries = 3 # 設定最多重試 3 次
     
     for attempt in range(max_retries):
