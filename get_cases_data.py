@@ -1,20 +1,24 @@
 import pandas as pd
 import requests
 import io
-import time
+import os
 
 def get_cases():
     #疾病管制署資料開放平台
     #https://data.cdc.gov.tw/dataset/dengue-daily-determined-cases-1998/resource/e868ae05-2381-44f2-9656-42292ef7e0c6
     url = "https://od.cdc.gov.tw/eic/Dengue_Daily.csv"
-    print("正在下載每日確診病例資料...")
+    api_key = os.getenv("SCRAPERAPI_KEY")
+    print("正在透過 ScraperAPI 代理下載每日確診病例資料...")
     
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    payload = {
+        'api_key': api_key,
+        'url': target_url,
+        'country_code': 'tw', 
+        'premium': 'true' 
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
         response.raise_for_status()
         response.encoding = 'utf-8-sig'
         
@@ -35,7 +39,7 @@ def get_cases():
         
         return df_tainan
         
+    except requests.exceptions.Timeout:
+        print("發生錯誤: ScraperAPI 連線超時，請稍後再試。")
     except Exception as e:
         print(f"發生錯誤: {e}")
-
-    
