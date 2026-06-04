@@ -1,21 +1,22 @@
 import pandas as pd
 import requests
 import io
-from scraperapi import fetch_data
 
 def get_cases():
     #疾病管制署資料開放平台
     #https://data.cdc.gov.tw/dataset/dengue-daily-determined-cases-1998/resource/e868ae05-2381-44f2-9656-42292ef7e0c6
     url = "https://od.cdc.gov.tw/eic/Dengue_Daily.csv"
-    print("正在透過下載每日確診病例資料...")
+    print("正在下載每日確診病例資料...")
     
     try:
-        response = fetch_data(url)
+        response = requests.get(url)
+        response.raise_for_status()
+        response.encoding = 'utf-8-sig'
         
         df = pd.read_csv(io.StringIO(response.text), low_memory=False)
         df.columns = df.columns.str.strip()
         #選取縣市
-        df_tainan = df[df['居住縣市'] == '台南市'].copy()
+        df_tainan = df[df['居住縣市'] == '台南市']
 
         #將發病日轉換為時間格式
         df_tainan['發病日'] = pd.to_datetime(df_tainan['發病日'])
@@ -29,8 +30,7 @@ def get_cases():
         
         return df_tainan
         
-    except requests.exceptions.Timeout:
-        print("發生錯誤: ScraperAPI 連線超時，請稍後再試。")
     except Exception as e:
         print(f"發生錯誤: {e}")
-        
+
+    
