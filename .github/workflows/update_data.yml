@@ -28,9 +28,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas requests urllib3 numpy xlrd epyestim
           
-      - name: Test CDC connectivity
-        run: curl -I https://od.cdc.gov.tw/eic/Dengue_Daily.csv
-          
       - name: Run Update Pipeline
         env:
           CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
