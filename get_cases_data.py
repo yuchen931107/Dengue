@@ -12,7 +12,7 @@ def get_cases():
     
     payload = {
         'api_key': api_key,
-        'url': target_url,
+        'url': url,
         'country_code': 'tw', 
         'premium': 'true' 
     }
