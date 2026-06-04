@@ -19,7 +19,7 @@ if __name__ == "__main__":
     mos_df = get_invest()
 
     print("抓取病媒蚊調查紀錄\n")
-    get_population()
+    #get_population()
 
     print("計算RT")
     count_RT()
