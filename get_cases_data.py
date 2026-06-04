@@ -1,6 +1,7 @@
 import pandas as pd
 import requests
 import io
+import time
 
 def get_cases():
     #疾病管制署資料開放平台
@@ -8,15 +9,19 @@ def get_cases():
     url = "https://od.cdc.gov.tw/eic/Dengue_Daily.csv"
     print("正在下載每日確診病例資料...")
     
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
     try:
-        response = requests.get(url)
+        response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         response.encoding = 'utf-8-sig'
         
         df = pd.read_csv(io.StringIO(response.text), low_memory=False)
         df.columns = df.columns.str.strip()
         #選取縣市
-        df_tainan = df[df['居住縣市'] == '台南市']
+        df_tainan = df[df['居住縣市'] == '台南市'].copy()
 
         #將發病日轉換為時間格式
         df_tainan['發病日'] = pd.to_datetime(df_tainan['發病日'])
