@@ -9,7 +9,7 @@ def get_cases():
     print("正在下載每日確診病例資料...")
     
     try:
-        response = requests.get(url)
+        response = requests.get(url, verify=False)
         response.raise_for_status()
         response.encoding = 'utf-8-sig'
         
