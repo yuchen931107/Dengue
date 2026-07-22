@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -7,7 +8,9 @@ st.set_page_config(page_title="台南登革熱熱力圖", layout="wide")
 # 1. 讀取資料
 @st.cache_data
 def load_data():
-    df = pd.read_csv("data.csv")
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, "data.csv")
+    df = pd.read_csv(file_path)
     return df
 
 try:
