@@ -15,7 +15,7 @@ st.set_page_config(page_title="台南登革熱預測分析", layout="wide", page
 def load_data():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(current_dir, "data.csv")
-    df = pd.read_csv(file_path, encoding='utf-8-sig')
+    df = pd.read_csv(file_path, encoding='big5')
     df['Town'] = df['Town'].astype(str).str.replace("台南市", "").str.replace("臺南市", "").str.strip()
     # 建立一個「年-週」的排序鍵，讓跨年份的趨勢圖可以正確排序
     df['YearWeek'] = df['Year'].astype(str) + "-W" + df['Week'].astype(str).str.zfill(2)
