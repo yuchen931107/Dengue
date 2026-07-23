@@ -108,6 +108,7 @@ else:
         locations='Town',                   # 對應你資料集裡的 'Town' (如 '七股區')
         color=heat_metric,
         color_continuous_scale="Reds",      # 紅色系漸層
+        range_color=color_range,
         hover_name='Town'                   # 游標移過去顯示名稱
     )
     
