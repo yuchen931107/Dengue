@@ -66,7 +66,7 @@ st.sidebar.title("⚙️ 戰情室控制面板")
 
 # 讓使用者可以獨立選擇左右兩張地圖要看什麼指標
 # 等你未來加入預測模型，就可以左邊選「真實 RT_level」，右邊選「預測 RT_level」
-metric_options = ['Case_Count', 'RT_level', 'BI', 'CI', 'HI']
+metric_options = ['Case_Count', 'RT_level', 'LSTM' ]
 left_metric = st.sidebar.selectbox("🗺️ 左側地圖指標", options=metric_options, index=0) # 預設選 Case_Count
 right_metric = st.sidebar.selectbox("🗺️ 右側地圖指標", options=metric_options, index=1) # 預設選 RT_level
 
