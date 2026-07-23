@@ -41,8 +41,8 @@ def load_geojson():
         if '臺南' in props_str or '台南' in props_str:
             
             town_name = ""
-            # 2. 智慧尋找區域名稱欄位 (涵蓋所有奇怪的開源命名法)
-            for key in ['TOWNNAME', 'T_Name', 'name', 'TOWN', 'Town_Name']:
+            # 2. 智慧尋找區域名稱欄位 (涵蓋所有奇怪的開源命名法，含小寫 'town')
+            for key in ['TOWNNAME', 'T_Name', 'name', 'TOWN', 'Town_Name', 'town', 'Town']:
                 if key in props:
                     val = str(props[key]).replace('臺南市', '').replace('台南市', '').replace('臺南縣', '').replace('台南縣', '').strip()
                     if len(val) > 0:
