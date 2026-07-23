@@ -95,6 +95,12 @@ df_filtered = df[mask]
 if df_filtered.empty or df_filtered[heat_metric].sum() == 0:
     st.info("這一週沒有任何數據或數值皆為零，無法繪製地圖。請嘗試拖動左側的週次滑桿！")
 else:
+    # 針對不同的指標，決定是否要鎖定顏色的最大與最小值
+    if heat_metric == 'RT_level':
+        color_range = [0, 3] 
+    else:
+        color_range = None
+        
     # 畫出行政區塊的面量圖 (純幾何拼圖)
     fig = px.choropleth(
         df_filtered,
