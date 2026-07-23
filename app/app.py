@@ -10,22 +10,21 @@ st.set_page_config(page_title="台南登革熱區塊分佈圖", layout="wide")
 @st.cache_data
 def load_data():
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # ⚠️ 確保這裡的檔名跟你的資料集一樣，如果是 data_2.csv 請自行修改
     file_path = os.path.join(current_dir, "data.csv")
     df = pd.read_csv(file_path)
     
-    # 強制將所有 Town 欄位清理乾淨，確保沒有多餘空白
+    # 確保沒有多餘空白
     df['Town'] = df['Town'].astype(str).str.replace("台南市", "").str.replace("臺南市", "").str.strip()
     return df
 
 try:
     df = load_data()
 except FileNotFoundError:
-    st.error("找不到資料檔案，請確認檔名與路徑。")
+    st.error("找不到資料檔案。")
     st.stop()
 
 
-# 2. 載入台南市 GeoJSON 地理邊界 (究極防禦版)
+# 2. 載入台南市 GeoJSON 地理邊界
 @st.cache_data
 def load_geojson():
     url = "https://raw.githubusercontent.com/ronnywang/twgeojson/master/twtown2010.3.json"
@@ -36,7 +35,7 @@ def load_geojson():
     for feature in geojson['features']:
         props = feature.get('properties', {})
         
-        # 1. 暴力將所有屬性轉成字串，只要裡面包含台南，這塊拼圖我們就要！
+        # 1. 將所有屬性轉成字串，只要裡面包含台南就拿
         props_str = " ".join(str(v) for v in props.values())
         if '臺南' in props_str or '台南' in props_str:
             
@@ -50,11 +49,11 @@ def load_geojson():
                         break
             
             if town_name:
-                # 3. 歷史遺毒終極修復：將舊制的「鄉」、「鎮」、「市」全部替換成「區」
+                # 3. 將鄉、鎮、市全部替換成區
                 if town_name.endswith('鄉') or town_name.endswith('鎮') or town_name.endswith('市'):
                     town_name = town_name[:-1] + '區'
                 
-                # 4. 強制賦予每個區塊一個身份證(ID)，讓 Plotly 能夠 100% 認得它
+                # 4. 賦予每個區塊一個ID，讓Plotly能夠認得它
                 feature['id'] = town_name
                 tainan_features.append(feature)
                 
@@ -71,7 +70,7 @@ st.sidebar.title("⚙️ 面量圖控制面板")
 
 heat_metric = st.sidebar.selectbox(
     "選擇觀察指標", 
-    options=['Case_Count', 'RT_level', 'BI', 'CI', 'HI']
+    options=['Case_Count', 'RT_level']
 )
 
 available_years = sorted(df['Year'].unique())
