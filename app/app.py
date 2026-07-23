@@ -10,19 +10,22 @@ st.set_page_config(page_title="台南登革熱區塊分佈圖", layout="wide")
 @st.cache_data
 def load_data():
     current_dir = os.path.dirname(os.path.abspath(__file__))
+    # ⚠️ 確保這裡的檔名跟你的資料集一樣，如果是 data_2.csv 請自行修改
     file_path = os.path.join(current_dir, "data.csv")
     df = pd.read_csv(file_path)
+    
+    # 強制將所有 Town 欄位清理乾淨，確保沒有多餘空白
     df['Town'] = df['Town'].astype(str).str.replace("台南市", "").str.replace("臺南市", "").str.strip()
     return df
 
 try:
     df = load_data()
 except FileNotFoundError:
-    st.error("找不到 data.csv 檔案，請確認檔案位置。")
+    st.error("找不到資料檔案，請確認檔名與路徑。")
     st.stop()
 
 
-# 2. 載入台南市 GeoJSON 地理邊界 (終極修復版：處理縣市合併的字尾問題)
+# 2. 載入台南市 GeoJSON 地理邊界 (究極防禦版)
 @st.cache_data
 def load_geojson():
     url = "https://raw.githubusercontent.com/ronnywang/twgeojson/master/twtown2010.3.json"
@@ -32,20 +35,29 @@ def load_geojson():
     tainan_features = []
     for feature in geojson['features']:
         props = feature.get('properties', {})
-        county = props.get('COUNTYNAME', '')
         
-        # 抓出 2010 年的「臺南縣」與「臺南市」
-        if county in ['臺南市', '台南市', '臺南縣', '台南縣']:
-            town_name = props.get('TOWNNAME', '').strip()
+        # 1. 暴力將所有屬性轉成字串，只要裡面包含台南，這塊拼圖我們就要！
+        props_str = " ".join(str(v) for v in props.values())
+        if '臺南' in props_str or '台南' in props_str:
             
-            # 【歷史遺毒終極修復】將舊制的「鄉」、「鎮」、「市」全部統一替換成「區」
-            if town_name.endswith('鄉') or town_name.endswith('鎮') or town_name.endswith('市'):
-                town_name = town_name[:-1] + '區'
+            town_name = ""
+            # 2. 智慧尋找區域名稱欄位 (涵蓋所有奇怪的開源命名法)
+            for key in ['TOWNNAME', 'T_Name', 'name', 'TOWN', 'Town_Name']:
+                if key in props:
+                    val = str(props[key]).replace('臺南市', '').replace('台南市', '').replace('臺南縣', '').replace('台南縣', '').strip()
+                    if len(val) > 0:
+                        town_name = val
+                        break
             
-            # 強制賦予每個區塊一個 ID
-            feature['id'] = town_name
-            tainan_features.append(feature)
-            
+            if town_name:
+                # 3. 歷史遺毒終極修復：將舊制的「鄉」、「鎮」、「市」全部替換成「區」
+                if town_name.endswith('鄉') or town_name.endswith('鎮') or town_name.endswith('市'):
+                    town_name = town_name[:-1] + '區'
+                
+                # 4. 強制賦予每個區塊一個身份證(ID)，讓 Plotly 能夠 100% 認得它
+                feature['id'] = town_name
+                tainan_features.append(feature)
+                
     geojson['features'] = tainan_features
     return geojson
 
@@ -88,7 +100,7 @@ else:
     fig = px.choropleth(
         df_filtered,
         geojson=tainan_geojson,
-        locations='Town',                   # 對應 df 的 'Town' (例如 '七股區')
+        locations='Town',                   # 對應你資料集裡的 'Town' (如 '七股區')
         color=heat_metric,
         color_continuous_scale="Reds",      # 紅色系漸層
         hover_name='Town'                   # 游標移過去顯示名稱
