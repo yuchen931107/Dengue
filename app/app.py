@@ -69,12 +69,30 @@ if tainan_geojson is None:
 
 
 # ==========================================
+# 模型設定（之後要加第四個模型，只要改這裡就好）
+# ==========================================
+MODEL_COLUMNS = ['LSTM', 'SARIMAX', 'XGboost']
+MODEL_COLORS = {
+    'LSTM': '#1f77b4',
+    'SARIMAX': '#2ca02c',
+    'XGboost': '#9467bd',
+}
+available_models = [m for m in MODEL_COLUMNS if m in df.columns]
+
+
+# ==========================================
 # 側邊欄：互動式控制面板
 # ==========================================
 st.sidebar.title("⚙️ 戰情室控制面板")
 
-metric_options = ['Case_Count', 'RT_level', 'LSTM' ,'SARIMAX' , 'XGboost']
-metric_labels = {'Case_Count': '病例數', 'RT_level': '風險等級 (RT_level)', 'LSTM': 'LSTM 預測值', 'SARIMAX': 'SARIMAX 預測值', 'XGboost': 'XGboost 預測值'}
+metric_options = ['Case_Count', 'RT_level'] + available_models
+metric_labels = {
+    'Case_Count': '病例數',
+    'RT_level': '風險等級 (RT_level)',
+    'LSTM': 'LSTM 預測值',
+    'SARIMAX': 'SARIMAX 預測值',
+    'XGboost': 'XGboost 預測值',
+}
 
 left_metric = st.sidebar.selectbox(
     "🗺️ 左側地圖指標", options=metric_options, index=0,
@@ -99,6 +117,15 @@ selected_week = st.sidebar.select_slider(
 st.sidebar.markdown("---")
 all_towns = sorted(df['Town'].unique())
 selected_town_trend = st.sidebar.selectbox("📍 選擇區域看趨勢（下方頁籤使用）", options=["全市加總"] + all_towns)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**🤖 趨勢頁籤：要比較哪些模型？**")
+selected_models = st.sidebar.multiselect(
+    "選擇要疊圖比較的預測模型",
+    options=available_models,
+    default=available_models,
+    format_func=lambda x: metric_labels.get(x, x)
+)
 
 
 # ==========================================
@@ -243,15 +270,25 @@ with tab_trend:
     st.markdown(f"### 📈 {selected_town_trend} — 歷史趨勢")
 
     if selected_town_trend == "全市加總":
-        trend_df = df.groupby(['Year', 'Week', 'YearWeek'], as_index=False).agg(
-            Case_Count=('Case_Count', 'sum'),
-            RT_level=('RT_level', 'mean'),
-            **({'LSTM': ('LSTM', 'mean')} if 'LSTM' in df.columns else {})
-        )
+        agg_dict = {
+            'Case_Count': ('Case_Count', 'sum'),
+            'RT_level': ('RT_level', 'mean'),
+        }
+        for m in available_models:
+            agg_dict[m] = (m, 'mean')
+        trend_df = df.groupby(['Year', 'Week', 'YearWeek'], as_index=False).agg(**agg_dict)
     else:
         trend_df = df[df['Town'] == selected_town_trend].copy()
 
     trend_df = trend_df.sort_values(['Year', 'Week'])
+
+    # 可以縮小觀察範圍，避免全部年份疊在一起看不清楚
+    year_range = st.select_slider(
+        "🔎 縮小趨勢圖的觀察年份範圍",
+        options=available_years,
+        value=(available_years[max(0, len(available_years) - 3)], available_years[-1])
+    )
+    trend_df_view = trend_df[(trend_df['Year'] >= year_range[0]) & (trend_df['Year'] <= year_range[1])]
 
     col_t1, col_t2 = st.columns(2)
 
@@ -259,7 +296,7 @@ with tab_trend:
         st.markdown("**病例數變化**")
         fig_cases = go.Figure()
         fig_cases.add_trace(go.Scatter(
-            x=trend_df['YearWeek'], y=trend_df['Case_Count'],
+            x=trend_df_view['YearWeek'], y=trend_df_view['Case_Count'],
             mode='lines+markers', name='實際病例數',
             line=dict(color='#d62728', width=2)
         ))
@@ -271,19 +308,22 @@ with tab_trend:
         st.plotly_chart(fig_cases, use_container_width=True)
 
     with col_t2:
-        st.markdown("**風險等級變化：實際值 vs LSTM 預測值**")
+        model_label_str = "、".join(metric_labels.get(m, m) for m in selected_models) if selected_models else "（尚未選擇模型）"
+        st.markdown(f"**風險等級變化：實際值 vs {model_label_str}**")
+
         fig_rt = go.Figure()
         fig_rt.add_trace(go.Scatter(
-            x=trend_df['YearWeek'], y=trend_df['RT_level'],
+            x=trend_df_view['YearWeek'], y=trend_df_view['RT_level'],
             mode='lines+markers', name='實際 RT_level',
-            line=dict(color='#ff7f0e', width=2)
+            line=dict(color='#ff7f0e', width=3)
         ))
-        if 'LSTM' in trend_df.columns:
-            fig_rt.add_trace(go.Scatter(
-                x=trend_df['YearWeek'], y=trend_df['LSTM'],
-                mode='lines+markers', name='LSTM 預測 RT_level',
-                line=dict(color='#1f77b4', width=2, dash='dash')
-            ))
+        for m in selected_models:
+            if m in trend_df_view.columns:
+                fig_rt.add_trace(go.Scatter(
+                    x=trend_df_view['YearWeek'], y=trend_df_view[m],
+                    mode='lines+markers', name=f'{m} 預測',
+                    line=dict(color=MODEL_COLORS.get(m, '#888888'), width=2, dash='dash')
+                ))
         fig_rt.update_layout(
             xaxis_title="年-週", yaxis_title="RT_level",
             margin={"r": 10, "t": 10, "l": 10, "b": 10},
@@ -293,13 +333,21 @@ with tab_trend:
                           annotation_text="高風險門檻", annotation_position="top left")
         st.plotly_chart(fig_rt, use_container_width=True)
 
-    if 'LSTM' in trend_df.columns and trend_df['RT_level'].notna().any():
-        mae = (trend_df['RT_level'] - trend_df['LSTM']).abs().mean()
-        exact_match_rate = (trend_df['RT_level'].round() == trend_df['LSTM'].round()).mean() * 100
-        st.caption(
-            f"📐 LSTM 模型在此區域/範圍預測 RT_level 的平均絕對誤差 (MAE)：約 {mae:.2f} 級"
-            f"，等級預測準確率：約 {exact_match_rate:.1f}%"
-        )
+    # 模型準確度比較表：每個模型各自算一次 MAE 與等級命中率，方便一次比較三個模型
+    if selected_models:
+        st.markdown("#### 📐 模型誤差比較")
+        rows = []
+        for m in selected_models:
+            if m in trend_df_view.columns:
+                valid = trend_df_view[['RT_level', m]].dropna()
+                if not valid.empty:
+                    mae = (valid['RT_level'] - valid[m]).abs().mean()
+                    acc = (valid['RT_level'].round() == valid[m].round()).mean() * 100
+                    rows.append({"模型": m, "MAE（級）": round(mae, 3), "等級命中率": f"{acc:.1f}%"})
+        if rows:
+            st.dataframe(pd.DataFrame(rows).set_index("模型"), use_container_width=True)
+    else:
+        st.info("請從左側選單勾選至少一個模型才會顯示比較圖與誤差表。")
 
 # ------------------------------------------
 # 頁籤三：原始資料
