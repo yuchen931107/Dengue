@@ -79,11 +79,15 @@ MODEL_COLORS = {
 }
 available_models = [m for m in MODEL_COLUMNS if m in df.columns]
 
-
-# ==========================================
-# 側邊欄：互動式控制面板
-# ==========================================
-st.sidebar.title("⚙️ 戰情室控制面板")
+# RT_level 是類別型的風險等級（0～3），不是連續數值，所以地圖與趨勢圖都用離散配色，
+# 而不是用連續色階去內插出中間的顏色。
+RT_LEVEL_COLORS = {
+    '0': '#2ca02c',  # 綠：無風險
+    '1': '#ffd166',  # 黃：低度關注
+    '2': '#ff7f0e',  # 橘：高風險
+    '3': '#d62728',  # 紅：最高風險
+}
+RT_LEVEL_ORDER = ['0', '1', '2', '3']
 
 metric_options = ['Case_Count', 'RT_level'] + available_models
 metric_labels = {
@@ -94,56 +98,48 @@ metric_labels = {
     'XGboost': 'XGboost 預測值',
 }
 
-left_metric = st.sidebar.selectbox(
-    "🗺️ 左側地圖指標", options=metric_options, index=0,
-    format_func=lambda x: metric_labels.get(x, x)
-)
-right_metric = st.sidebar.selectbox(
-    "🗺️ 右側地圖指標", options=metric_options, index=1,
-    format_func=lambda x: metric_labels.get(x, x)
-)
-
-st.sidebar.markdown("---")
 available_years = sorted(df['Year'].unique())
-selected_year = st.sidebar.selectbox("📅 選擇年份", available_years, index=len(available_years) - 1)
-
-available_weeks = sorted(df[df['Year'] == selected_year]['Week'].unique())
-selected_week = st.sidebar.select_slider(
-    "⏱️ 調整週次觀察疫情變化",
-    options=available_weeks,
-    value=available_weeks[-1]
-)
-
-st.sidebar.markdown("---")
 all_towns = sorted(df['Town'].unique())
-selected_town_trend = st.sidebar.selectbox("📍 選擇區域看趨勢（下方頁籤使用）", options=["全市加總"] + all_towns)
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("**🤖 趨勢頁籤：要比較哪些模型？**")
-selected_models = st.sidebar.multiselect(
-    "選擇要疊圖比較的預測模型",
-    options=available_models,
-    default=available_models,
-    format_func=lambda x: metric_labels.get(x, x)
-)
+
+# ==========================================
+# 側邊欄：只留標題，控制選項都搬到各分頁裡
+# ==========================================
+st.sidebar.title("🦟 台南登革熱戰情室")
+st.sidebar.markdown("每個分頁都有自己專屬的控制選項，切換分頁即可看到對應設定。")
 
 
 # ==========================================
 # 畫圖共用函數
 # ==========================================
 def draw_map(df_plot, metric_name):
-    color_range = [0, 3] if metric_name == 'RT_level' else None
+    if metric_name == 'RT_level':
+        # 類別型資料：先四捨五入成整數等級，再轉成字串類別，才能用離散配色
+        # （而不是像 Case_Count 那樣用連續色階去內插）。
+        df_plot = df_plot.copy()
+        df_plot['RT_level_cat'] = df_plot['RT_level'].round().astype('Int64').astype(str)
 
-    fig = px.choropleth(
-        df_plot,
-        geojson=tainan_geojson,
-        locations='Town',
-        color=metric_name,
-        color_continuous_scale="Reds",
-        range_color=color_range,
-        hover_name='Town',
-        hover_data={'Town': False, metric_name: True}
-    )
+        fig = px.choropleth(
+            df_plot,
+            geojson=tainan_geojson,
+            locations='Town',
+            color='RT_level_cat',
+            color_discrete_map=RT_LEVEL_COLORS,
+            category_orders={'RT_level_cat': RT_LEVEL_ORDER},
+            hover_name='Town',
+            hover_data={'Town': False, 'RT_level_cat': False, 'RT_level': True}
+        )
+        fig.update_layout(legend_title_text="風險等級")
+    else:
+        fig = px.choropleth(
+            df_plot,
+            geojson=tainan_geojson,
+            locations='Town',
+            color=metric_name,
+            color_continuous_scale="Reds",
+            hover_name='Town',
+            hover_data={'Town': False, metric_name: True}
+        )
 
     fig.update_geos(fitbounds="locations", visible=False, projection_type="mercator")
     fig.update_traces(marker_line_width=1.5, marker_line_color="white")
@@ -178,18 +174,47 @@ def get_previous_week_data(df, year, week):
 # ==========================================
 st.title("🦟 台南市登革熱戰情儀表板")
 
-mask = (df['Year'] == selected_year) & (df['Week'] == selected_week)
-df_filtered = df[mask].copy()
-df_prev = get_previous_week_data(df, selected_year, selected_week)
-
 tab_map, tab_trend, tab_data = st.tabs(["🗺️ 地圖總覽", "📈 趨勢分析", "📋 原始資料"])
 
 # ------------------------------------------
-# 頁籤一：地圖總覽
+# 頁籤一：地圖總覽（控制選項在頁籤內）
 # ------------------------------------------
 with tab_map:
+    st.markdown("#### ⚙️ 本頁控制選項")
+    ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([1, 1, 1, 1.4])
+
+    with ctrl1:
+        left_metric = st.selectbox(
+            "🗺️ 左側地圖指標", options=metric_options, index=0,
+            format_func=lambda x: metric_labels.get(x, x), key="map_left_metric"
+        )
+    with ctrl2:
+        right_metric = st.selectbox(
+            "🗺️ 右側地圖指標", options=metric_options, index=1,
+            format_func=lambda x: metric_labels.get(x, x), key="map_right_metric"
+        )
+    with ctrl3:
+        selected_year = st.selectbox(
+            "📅 選擇年份", available_years, index=len(available_years) - 1, key="map_year"
+        )
+
+    available_weeks_map = sorted(df[df['Year'] == selected_year]['Week'].unique())
+    with ctrl4:
+        selected_week = st.select_slider(
+            "⏱️ 調整週次觀察疫情變化",
+            options=available_weeks_map,
+            value=available_weeks_map[-1],
+            key="map_week"
+        )
+
+    st.markdown("---")
+
+    mask = (df['Year'] == selected_year) & (df['Week'] == selected_week)
+    df_filtered = df[mask].copy()
+    df_prev = get_previous_week_data(df, selected_year, selected_week)
+
     if df_filtered.empty:
-        st.info("這一週沒有任何數據。請嘗試拖動左側的週次滑桿！")
+        st.info("這一週沒有任何數據。請嘗試拖動上方的週次滑桿！")
     else:
         st.markdown("### 📊 當週疫情概況")
 
@@ -264,9 +289,33 @@ with tab_map:
             st.plotly_chart(fig_bar, use_container_width=True)
 
 # ------------------------------------------
-# 頁籤二：趨勢分析
+# 頁籤二：趨勢分析（控制選項在頁籤內）
 # ------------------------------------------
 with tab_trend:
+    st.markdown("#### ⚙️ 本頁控制選項")
+    tctrl1, tctrl2 = st.columns([1, 2])
+
+    with tctrl1:
+        selected_town_trend = st.selectbox(
+            "📍 選擇區域看趨勢", options=["全市加總"] + all_towns, key="trend_town"
+        )
+    with tctrl2:
+        selected_models = st.multiselect(
+            "🤖 選擇要疊圖比較的預測模型",
+            options=available_models,
+            default=available_models,
+            format_func=lambda x: metric_labels.get(x, x),
+            key="trend_models"
+        )
+
+    year_range = st.select_slider(
+        "🔎 縮小趨勢圖的觀察年份範圍",
+        options=available_years,
+        value=(available_years[max(0, len(available_years) - 3)], available_years[-1]),
+        key="trend_year_range"
+    )
+
+    st.markdown("---")
     st.markdown(f"### 📈 {selected_town_trend} — 歷史趨勢")
 
     if selected_town_trend == "全市加總":
@@ -281,13 +330,6 @@ with tab_trend:
         trend_df = df[df['Town'] == selected_town_trend].copy()
 
     trend_df = trend_df.sort_values(['Year', 'Week'])
-
-    # 可以縮小觀察範圍，避免全部年份疊在一起看不清楚
-    year_range = st.select_slider(
-        "🔎 縮小趨勢圖的觀察年份範圍",
-        options=available_years,
-        value=(available_years[max(0, len(available_years) - 3)], available_years[-1])
-    )
     trend_df_view = trend_df[(trend_df['Year'] >= year_range[0]) & (trend_df['Year'] <= year_range[1])]
 
     col_t1, col_t2 = st.columns(2)
@@ -312,20 +354,23 @@ with tab_trend:
         st.markdown(f"**風險等級變化：實際值 vs {model_label_str}**")
 
         fig_rt = go.Figure()
+        # RT_level 是類別型的等級（0/1/2/3），不是連續數值，所以實際值用階梯線
+        # （line_shape='hv'）呈現「跳到下一級」的感覺，而不是用直線內插出 1.5 級這種不存在的值。
         fig_rt.add_trace(go.Scatter(
             x=trend_df_view['YearWeek'], y=trend_df_view['RT_level'],
             mode='lines+markers', name='實際 RT_level',
-            line=dict(color='#ff7f0e', width=3)
+            line=dict(color='#ff7f0e', width=3, shape='hv')
         ))
         for m in selected_models:
             if m in trend_df_view.columns:
                 fig_rt.add_trace(go.Scatter(
                     x=trend_df_view['YearWeek'], y=trend_df_view[m],
                     mode='lines+markers', name=f'{m} 預測',
-                    line=dict(color=MODEL_COLORS.get(m, '#888888'), width=2, dash='dash')
+                    line=dict(color=MODEL_COLORS.get(m, '#888888'), width=2, dash='dash', shape='hv')
                 ))
         fig_rt.update_layout(
-            xaxis_title="年-週", yaxis_title="RT_level",
+            xaxis_title="年-週", yaxis_title="RT_level（等級）",
+            yaxis=dict(tickmode='array', tickvals=[0, 1, 2, 3], range=[-0.3, 3.3]),
             margin={"r": 10, "t": 10, "l": 10, "b": 10},
             legend=dict(orientation="h", yanchor="bottom", y=1.02)
         )
@@ -347,19 +392,36 @@ with tab_trend:
         if rows:
             st.dataframe(pd.DataFrame(rows).set_index("模型"), use_container_width=True)
     else:
-        st.info("請從左側選單勾選至少一個模型才會顯示比較圖與誤差表。")
+        st.info("請從上方選單勾選至少一個模型才會顯示比較圖與誤差表。")
 
 # ------------------------------------------
-# 頁籤三：原始資料
+# 頁籤三：原始資料（控制選項在頁籤內）
 # ------------------------------------------
 with tab_data:
-    st.markdown(f"### 📋 {selected_year} 年第 {selected_week} 週 原始資料")
-    st.dataframe(df_filtered, use_container_width=True)
+    st.markdown("#### ⚙️ 本頁控制選項")
+    dctrl1, dctrl2 = st.columns(2)
 
-    csv_data = df_filtered.to_csv(index=False).encode('utf-8-sig')
+    with dctrl1:
+        data_year = st.selectbox("📅 選擇年份", available_years, index=len(available_years) - 1, key="data_year")
+
+    available_weeks_data = sorted(df[df['Year'] == data_year]['Week'].unique())
+    with dctrl2:
+        data_week = st.select_slider(
+            "⏱️ 選擇週次", options=available_weeks_data, value=available_weeks_data[-1], key="data_week"
+        )
+
+    st.markdown("---")
+
+    data_mask = (df['Year'] == data_year) & (df['Week'] == data_week)
+    df_filtered_data = df[data_mask].copy()
+
+    st.markdown(f"### 📋 {data_year} 年第 {data_week} 週 原始資料")
+    st.dataframe(df_filtered_data, use_container_width=True)
+
+    csv_data = df_filtered_data.to_csv(index=False).encode('utf-8-sig')
     st.download_button(
         label="📥 下載當週資料 (CSV)",
         data=csv_data,
-        file_name=f"tainan_dengue_{selected_year}_W{selected_week}.csv",
+        file_name=f"tainan_dengue_{data_year}_W{data_week}.csv",
         mime="text/csv"
     )
