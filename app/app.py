@@ -12,8 +12,6 @@ def load_data():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(current_dir, "data.csv")
     df = pd.read_csv(file_path)
-    
-    # 確保資料集的 Town 欄位非常乾淨 (去掉空格、去掉台南市)
     df['Town'] = df['Town'].astype(str).str.replace("台南市", "").str.replace("臺南市", "").str.strip()
     return df
 
@@ -24,17 +22,24 @@ except FileNotFoundError:
     st.stop()
 
 
-# 2. 載入台南市 GeoJSON 地理邊界
+# 2. 載入台南市 GeoJSON 地理邊界 (修正 2010 年縣市合併問題)
 @st.cache_data
 def load_geojson():
     url = "https://raw.githubusercontent.com/ronnywang/twgeojson/master/twtown2010.3.json"
     response = requests.get(url)
     geojson = response.json()
     
-    # 【關鍵過濾】只保留「臺南市」的區塊
     tainan_features = []
     for feature in geojson['features']:
-        if feature['properties'].get('COUNTYNAME') == '臺南市':
+        props = feature.get('properties', {})
+        county = props.get('COUNTYNAME', '')
+        
+        # 【大重點】把 2010 年的「臺南縣」與「臺南市」一起抓進來！
+        if county in ['臺南市', '台南市', '臺南縣', '台南縣']:
+            town_name = props.get('TOWNNAME', '').strip()
+            
+            # 【關鍵設定】強制賦予每個區塊一個 ID，這是 Plotly 畫純幾何圖的必備條件
+            feature['id'] = town_name
             tainan_features.append(feature)
             
     geojson['features'] = tainan_features
@@ -75,29 +80,29 @@ df_filtered = df[mask]
 if df_filtered.empty or df_filtered[heat_metric].sum() == 0:
     st.info("這一週沒有任何數據或數值皆為零，無法繪製地圖。請嘗試拖動左側的週次滑桿！")
 else:
-    # ★★★ 關鍵修改：改用 px.choropleth (放棄街道底圖，改用純向量幾何) ★★★
+    # 畫出行政區塊的面量圖 (純幾何拼圖)
     fig = px.choropleth(
         df_filtered,
         geojson=tainan_geojson,
-        locations='Town',                   # 核對 data.csv 裡面的 'Town' 欄位
-        featureidkey='properties.TOWNNAME', # 核對 GeoJSON 裡面的區域名稱
+        locations='Town',                   # 對應 df 的 'Town' (例如 '新營區')
         color=heat_metric,
         color_continuous_scale="Reds",      # 紅色系漸層
-        hover_name='Town'                   # 滑鼠游標移過去顯示區域名稱
+        hover_name='Town'                   # 游標移過去顯示名稱
     )
     
-    # 隱藏地球背景、海洋與經緯度線，並將視角「完美縮放」到台南市的邊界
+    # 隱藏地球背景、完美縮放，並加上麥卡托投影 (避免台灣形狀被扭曲變胖)
     fig.update_geos(
         fitbounds="locations", 
-        visible=False
+        visible=False,
+        projection_type="mercator"
     )
     
-    # 加上白色的區塊邊框，讓各個行政區看起來更分明 (就像你提供的左圖那樣)
+    # 加上白色邊框，增加各行政區拼圖的立體質感
     fig.update_traces(marker_line_width=1.5, marker_line_color="white")
     
     fig.update_layout(
         margin={"r":0,"t":0,"l":0,"b":0},
-        plot_bgcolor='rgba(0,0,0,0)', # 背景設為透明
+        plot_bgcolor='rgba(0,0,0,0)',       # 將圖表背景設為完全透明
         paper_bgcolor='rgba(0,0,0,0)'
     )
     
