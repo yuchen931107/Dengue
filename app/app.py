@@ -22,7 +22,7 @@ except FileNotFoundError:
     st.stop()
 
 
-# 2. 載入台南市 GeoJSON 地理邊界 (修正 2010 年縣市合併問題)
+# 2. 載入台南市 GeoJSON 地理邊界 (終極修復版：處理縣市合併的字尾問題)
 @st.cache_data
 def load_geojson():
     url = "https://raw.githubusercontent.com/ronnywang/twgeojson/master/twtown2010.3.json"
@@ -34,11 +34,15 @@ def load_geojson():
         props = feature.get('properties', {})
         county = props.get('COUNTYNAME', '')
         
-        # 【大重點】把 2010 年的「臺南縣」與「臺南市」一起抓進來！
+        # 抓出 2010 年的「臺南縣」與「臺南市」
         if county in ['臺南市', '台南市', '臺南縣', '台南縣']:
             town_name = props.get('TOWNNAME', '').strip()
             
-            # 【關鍵設定】強制賦予每個區塊一個 ID，這是 Plotly 畫純幾何圖的必備條件
+            # 【歷史遺毒終極修復】將舊制的「鄉」、「鎮」、「市」全部統一替換成「區」
+            if town_name.endswith('鄉') or town_name.endswith('鎮') or town_name.endswith('市'):
+                town_name = town_name[:-1] + '區'
+            
+            # 強制賦予每個區塊一個 ID
             feature['id'] = town_name
             tainan_features.append(feature)
             
@@ -84,7 +88,7 @@ else:
     fig = px.choropleth(
         df_filtered,
         geojson=tainan_geojson,
-        locations='Town',                   # 對應 df 的 'Town' (例如 '新營區')
+        locations='Town',                   # 對應 df 的 'Town' (例如 '七股區')
         color=heat_metric,
         color_continuous_scale="Reds",      # 紅色系漸層
         hover_name='Town'                   # 游標移過去顯示名稱
