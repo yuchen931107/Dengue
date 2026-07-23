@@ -6,7 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # 將網頁設定為寬螢幕模式 (更適合戰情室與雙地圖)
-st.set_page_config(page_title="台南登革熱戰情儀表板", layout="wide", page_icon="🦟")
+st.set_page_config(page_title="台南登革熱預測分析", layout="wide", page_icon="🦟")
 
 # ==========================================
 # 1. 讀取與清理資料
@@ -73,8 +73,8 @@ if tainan_geojson is None:
 # ==========================================
 st.sidebar.title("⚙️ 戰情室控制面板")
 
-metric_options = ['Case_Count', 'RT_level', 'LSTM']
-metric_labels = {'Case_Count': '病例數', 'RT_level': '風險等級 (RT_level)', 'LSTM': 'LSTM 預測值'}
+metric_options = ['Case_Count', 'RT_level', 'LSTM' ,'SARIMAX' , 'XGboost']
+metric_labels = {'Case_Count': '病例數', 'RT_level': '風險等級 (RT_level)', 'LSTM': 'LSTM 預測值', 'SARIMAX': 'SARIMAX 預測值', 'XGboost': 'XGboost 預測值'}
 
 left_metric = st.sidebar.selectbox(
     "🗺️ 左側地圖指標", options=metric_options, index=0,
