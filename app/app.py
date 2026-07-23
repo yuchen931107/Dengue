@@ -27,19 +27,33 @@ except FileNotFoundError:
 # 2. 載入台南市 GeoJSON 地理邊界 (透過快取加速，只會下載一次)
 @st.cache_data
 def load_geojson():
-    # 讀取開源社群提供的台灣鄉鎮輕量版 GeoJSON
     url = "https://raw.githubusercontent.com/ronnywang/twgeojson/master/twtown2010.3.json"
     response = requests.get(url)
     geojson = response.json()
     
-    # 【關鍵過濾】只保留「臺南市」的區域，避免畫到台中市或嘉義市的「東區」！
     tainan_features = []
     for feature in geojson['features']:
-        # 依照原始地圖資料的屬性 COUNTYNAME 來篩選
-        if feature['properties'].get('COUNTYNAME') == '臺南市':
-            tainan_features.append(feature)
+        props = feature.get('properties', {})
+        
+        # 1. 將所有屬性轉成字串，檢查這塊形狀是不是台南的
+        props_str = " ".join(str(v) for v in props.values())
+        if '臺南' in props_str or '台南' in props_str:
             
-    # 把過濾好的台南區塊塞回 GeoJSON 格式中
+            town_name = ""
+            # 2. 智慧尋找區域名稱 (涵蓋所有常見的奇怪欄位名)
+            for key in ['TOWNNAME', 'T_Name', 'name', 'TOWN', 'Town_Name']:
+                if key in props:
+                    val = str(props[key]).replace('臺南市', '').replace('台南市', '').strip()
+                    # 台南的行政區一定有「區」字結尾
+                    if val.endswith('區'):
+                        town_name = val
+                        break
+            
+            # 3. 把找到的區域名稱，強制綁定為這個形狀的專屬 ID
+            if town_name:
+                feature['id'] = town_name
+                tainan_features.append(feature)
+                
     geojson['features'] = tainan_features
     return geojson
 
@@ -83,15 +97,15 @@ else:
     # 畫出行政區塊的面量圖 (Choropleth)
     fig = px.choropleth_mapbox(
         df_filtered,
-        geojson=tainan_geojson,             # 給予我們剛剛過濾好的台南市邊界
-        locations='Town',                   # data.csv 裡面用來對應的欄位 (例如 "東區")
-        featureidkey='properties.TOWNNAME', # GeoJSON 裡面用來對應的屬性 (例如 "東區")
-        color=heat_metric,                  # 決定顏色的數值欄位
-        color_continuous_scale="Reds",      # 紅色系漸層
-        mapbox_style="carto-positron",      # 乾淨的底圖，凸顯疫情數據
-        zoom=9.5,                           # 預設縮放大小
-        center={"lat": 23.15, "lon": 120.25}, # 視角對準台南市
-        opacity=0.7                         # 設定區塊透明度 0.7，這樣才看得到底下的街道圖
+        geojson=tainan_geojson,             
+        locations='Town',                   # 核對 data.csv 裡面的 'Town' 欄位
+        # ⚠️ 注意：這裡把 featureidkey 那一行刪掉了！Plotly 會自動對應我們上面寫好的 id
+        color=heat_metric,                  
+        color_continuous_scale="Reds",      
+        mapbox_style="carto-positron",      
+        zoom=9.5,                           
+        center={"lat": 23.15, "lon": 120.25}, 
+        opacity=0.7                         
     )
     
     fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
