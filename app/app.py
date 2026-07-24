@@ -172,15 +172,22 @@ def get_previous_week_data(year, week):
     return pd.DataFrame()
 
 
-def render_map_column(column, metric_name, df_filtered):
-    """畫出單一欄位的地圖：先檢查該指標有沒有數據，再呼叫 draw_map"""
+def render_map_column(column, metric_name, df_filtered, side):
+    """畫出單一欄位的地圖：先檢查該指標有沒有數據，再呼叫 draw_map
+    side 用來組成唯一的 widget key（例如 'left'/'right'），避免左右兩側選到
+    同一個指標時，Streamlit 因為元件 ID 重複而報錯。
+    """
     with column:
         st.subheader(f"📍 {metric_labels.get(metric_name, metric_name)}")
         has_data = metric_name in df_filtered.columns and (
             df_filtered[metric_name].sum() > 0 or metric_name == 'RT_level'
         )
         if has_data:
-            st.plotly_chart(draw_map(df_filtered, metric_name), use_container_width=True)
+            st.plotly_chart(
+                draw_map(df_filtered, metric_name),
+                use_container_width=True,
+                key=f"map_{side}_{metric_name}"
+            )
         else:
             st.info("該指標無數據")
 
@@ -268,8 +275,8 @@ with tab_map:
 
         if tainan_geojson is not None:
             map_col1, map_col2 = st.columns(2)
-            render_map_column(map_col1, left_metric, df_filtered)
-            render_map_column(map_col2, right_metric, df_filtered)
+            render_map_column(map_col1, left_metric, df_filtered, side="left")
+            render_map_column(map_col2, right_metric, df_filtered, side="right")
         else:
             st.info("地理邊界資料無法載入，暫時無法顯示地圖，改看下方排行榜。")
 
@@ -428,7 +435,7 @@ with tab_trend:
                         margin={"r": 10, "t": 10, "l": 10, "b": 10},
                         yaxis=dict(autorange='reversed')
                     )
-                    st.plotly_chart(fig_cm, use_container_width=True)
+                    st.plotly_chart(fig_cm, use_container_width=True, key=f"cm_{m}")
     else:
         st.info("請從上方選單勾選至少一個模型才會顯示比較圖與誤差表。")
 
