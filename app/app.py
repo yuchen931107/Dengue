@@ -103,15 +103,19 @@ all_towns = sorted(df['Town'].unique())
 
 
 # ==========================================
-# 側邊欄：只留標題，控制選項都搬到各分頁裡
+# 共用函數（年份/週次篩選、地圖繪製都集中在這裡，避免各分頁各寫一份）
 # ==========================================
-st.sidebar.title("🦟 台南登革熱戰情室")
-st.sidebar.markdown("每個分頁都有自己專屬的控制選項，切換分頁即可看到對應設定。")
+def weeks_in_year(year):
+    """回傳某一年份中，資料裡實際存在的所有週次（由小到大排序）"""
+    return sorted(df[df['Year'] == year]['Week'].unique())
 
 
-# ==========================================
-# 畫圖共用函數
-# ==========================================
+def filter_by_week(year, week):
+    """依年份+週次篩出當週資料"""
+    return df[(df['Year'] == year) & (df['Week'] == week)].copy()
+
+
+
 def draw_map(df_plot, metric_name):
     if metric_name == 'RT_level':
         # 類別型資料：先四捨五入成整數等級，再轉成字串類別，才能用離散配色
@@ -151,22 +155,34 @@ def draw_map(df_plot, metric_name):
     return fig
 
 
-def get_previous_week_data(df, year, week):
+def get_previous_week_data(year, week):
     """取得上一週的資料，用來計算 KPI 的增減幅度"""
-    weeks_in_year = sorted(df[df['Year'] == year]['Week'].unique())
-    idx = weeks_in_year.index(week) if week in weeks_in_year else -1
+    weeks = weeks_in_year(year)
+    idx = weeks.index(week) if week in weeks else -1
     if idx > 0:
-        prev_week = weeks_in_year[idx - 1]
-        return df[(df['Year'] == year) & (df['Week'] == prev_week)]
-    else:
-        # 嘗試往前一年最後一週
-        prev_years = [y for y in sorted(df['Year'].unique()) if y < year]
-        if prev_years:
-            prev_year = prev_years[-1]
-            prev_weeks = sorted(df[df['Year'] == prev_year]['Week'].unique())
-            if prev_weeks:
-                return df[(df['Year'] == prev_year) & (df['Week'] == prev_weeks[-1])]
+        return filter_by_week(year, weeks[idx - 1])
+
+    # 當週是該年第一週時，嘗試往前一年最後一週找
+    prev_years = [y for y in available_years if y < year]
+    if prev_years:
+        prev_year = prev_years[-1]
+        prev_weeks = weeks_in_year(prev_year)
+        if prev_weeks:
+            return filter_by_week(prev_year, prev_weeks[-1])
     return pd.DataFrame()
+
+
+def render_map_column(column, metric_name, df_filtered):
+    """畫出單一欄位的地圖：先檢查該指標有沒有數據，再呼叫 draw_map"""
+    with column:
+        st.subheader(f"📍 {metric_labels.get(metric_name, metric_name)}")
+        has_data = metric_name in df_filtered.columns and (
+            df_filtered[metric_name].sum() > 0 or metric_name == 'RT_level'
+        )
+        if has_data:
+            st.plotly_chart(draw_map(df_filtered, metric_name), use_container_width=True)
+        else:
+            st.info("該指標無數據")
 
 
 # ==========================================
@@ -198,7 +214,7 @@ with tab_map:
             "📅 選擇年份", available_years, index=len(available_years) - 1, key="map_year"
         )
 
-    available_weeks_map = sorted(df[df['Year'] == selected_year]['Week'].unique())
+    available_weeks_map = weeks_in_year(selected_year)
     with ctrl4:
         selected_week = st.select_slider(
             "⏱️ 調整週次觀察疫情變化",
@@ -209,9 +225,8 @@ with tab_map:
 
     st.markdown("---")
 
-    mask = (df['Year'] == selected_year) & (df['Week'] == selected_week)
-    df_filtered = df[mask].copy()
-    df_prev = get_previous_week_data(df, selected_year, selected_week)
+    df_filtered = filter_by_week(selected_year, selected_week)
+    df_prev = get_previous_week_data(selected_year, selected_week)
 
     if df_filtered.empty:
         st.info("這一週沒有任何數據。請嘗試拖動上方的週次滑桿！")
@@ -253,22 +268,8 @@ with tab_map:
 
         if tainan_geojson is not None:
             map_col1, map_col2 = st.columns(2)
-
-            with map_col1:
-                st.subheader(f"📍 {metric_labels.get(left_metric, left_metric)}")
-                if left_metric in df_filtered.columns and (df_filtered[left_metric].sum() > 0 or left_metric == 'RT_level'):
-                    fig_left = draw_map(df_filtered, left_metric)
-                    st.plotly_chart(fig_left, use_container_width=True)
-                else:
-                    st.info("該指標無數據")
-
-            with map_col2:
-                st.subheader(f"📍 {metric_labels.get(right_metric, right_metric)}")
-                if right_metric in df_filtered.columns and (df_filtered[right_metric].sum() > 0 or right_metric == 'RT_level'):
-                    fig_right = draw_map(df_filtered, right_metric)
-                    st.plotly_chart(fig_right, use_container_width=True)
-                else:
-                    st.info("該指標無數據")
+            render_map_column(map_col1, left_metric, df_filtered)
+            render_map_column(map_col2, right_metric, df_filtered)
         else:
             st.info("地理邊界資料無法載入，暫時無法顯示地圖，改看下方排行榜。")
 
@@ -391,6 +392,43 @@ with tab_trend:
                     rows.append({"模型": m, "MAE（級）": round(mae, 3), "等級命中率": f"{acc:.1f}%"})
         if rows:
             st.dataframe(pd.DataFrame(rows).set_index("模型"), use_container_width=True)
+
+        st.markdown("#### 🔢 混淆矩陣：實際等級 vs 預測等級")
+        st.caption("對角線（左上到右下）代表猜對；離對角線越遠，代表猜錯的級數差越大。")
+
+        cm_models = [m for m in selected_models if m in trend_df_view.columns]
+        if cm_models:
+            cm_cols = st.columns(len(cm_models))
+            for col, m in zip(cm_cols, cm_models):
+                valid = trend_df_view[['RT_level', m]].dropna()
+                with col:
+                    st.markdown(f"**{m}**")
+                    if valid.empty:
+                        st.info("沒有可比對的資料")
+                        continue
+
+                    # 四捨五入並限制在 0~3 級之間，避免模型輸出超出範圍的極端值
+                    actual_cat = valid['RT_level'].round().clip(0, 3).astype(int)
+                    pred_cat = valid[m].round().clip(0, 3).astype(int)
+
+                    cm = pd.crosstab(actual_cat, pred_cat)
+                    cm = cm.reindex(index=[0, 1, 2, 3], columns=[0, 1, 2, 3], fill_value=0)
+
+                    fig_cm = go.Figure(data=go.Heatmap(
+                        z=cm.values,
+                        x=[f"預測 {c}" for c in cm.columns],
+                        y=[f"實際 {r}" for r in cm.index],
+                        colorscale='Blues',
+                        text=cm.values,
+                        texttemplate="%{text}",
+                        showscale=False,
+                        hovertemplate="實際等級 %{y}<br>預測等級 %{x}<br>次數：%{z}<extra></extra>"
+                    ))
+                    fig_cm.update_layout(
+                        margin={"r": 10, "t": 10, "l": 10, "b": 10},
+                        yaxis=dict(autorange='reversed')
+                    )
+                    st.plotly_chart(fig_cm, use_container_width=True)
     else:
         st.info("請從上方選單勾選至少一個模型才會顯示比較圖與誤差表。")
 
@@ -404,7 +442,7 @@ with tab_data:
     with dctrl1:
         data_year = st.selectbox("📅 選擇年份", available_years, index=len(available_years) - 1, key="data_year")
 
-    available_weeks_data = sorted(df[df['Year'] == data_year]['Week'].unique())
+    available_weeks_data = weeks_in_year(data_year)
     with dctrl2:
         data_week = st.select_slider(
             "⏱️ 選擇週次", options=available_weeks_data, value=available_weeks_data[-1], key="data_week"
@@ -412,8 +450,7 @@ with tab_data:
 
     st.markdown("---")
 
-    data_mask = (df['Year'] == data_year) & (df['Week'] == data_week)
-    df_filtered_data = df[data_mask].copy()
+    df_filtered_data = filter_by_week(data_year, data_week)
 
     st.markdown(f"### 📋 {data_year} 年第 {data_week} 週 原始資料")
     st.dataframe(df_filtered_data, use_container_width=True)
