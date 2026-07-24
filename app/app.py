@@ -17,8 +17,17 @@ def load_data():
     file_path = os.path.join(current_dir, "data.csv")
     df = pd.read_csv(file_path, encoding='big5')
     df['Town'] = df['Town'].astype(str).str.replace("台南市", "").str.replace("臺南市", "").str.strip()
-    # 建立一個「年-週」的排序鍵，讓跨年份的趨勢圖可以正確排序
-    df['YearWeek'] = df['Year'].astype(str) + "-W" + df['Week'].astype(str).str.zfill(2)
+
+    # 重要：Week 欄位存的是像 "2012/9/3" 這種沒有補零的日期字串，不是週數字。
+    # 如果直接對這種字串做 sorted()，Python 會照字元比大小（字串排序），
+    # 導致 10、11、12 月（開頭是 "1"）被排到 9 月（開頭是 "9"）前面，
+    # 造成年份裡後半年的週次「消失」在排序結果裡。
+    # 這裡統一轉成真正的日期型態，之後所有排序都改成照日期排序。
+    df['Week'] = pd.to_datetime(df['Week'], format='%Y/%m/%d')
+
+    # 建立一個「年-週」的排序鍵，讓跨年份的趨勢圖可以正確排序（直接用日期字串即可，
+    # 因為 Week 現在已經是日期型態，天生就能正確排序）。
+    df['YearWeek'] = df['Week'].dt.strftime('%Y-%m-%d')
     return df
 
 try:
@@ -89,6 +98,11 @@ RT_LEVEL_COLORS = {
 }
 RT_LEVEL_ORDER = ['0', '1', '2', '3']
 
+# RT_level 跟三個模型（LSTM/SARIMAX/XGboost）都是同一套 0~3 離散風險等級
+# （模型預測的是 RT_level，不是連續分數），地圖畫圖跟「有無數據」的判斷都要
+# 共用這份清單，才能讓四張地圖的比例尺與判斷邏輯保持一致。
+CATEGORICAL_METRICS = ['RT_level'] + available_models
+
 metric_options = ['Case_Count', 'RT_level'] + available_models
 metric_labels = {
     'Case_Count': '病例數',
@@ -117,21 +131,22 @@ def filter_by_week(year, week):
 
 
 def draw_map(df_plot, metric_name):
-    if metric_name == 'RT_level':
+    if metric_name in CATEGORICAL_METRICS:
         # 類別型資料：先四捨五入成整數等級，再轉成字串類別，才能用離散配色
         # （而不是像 Case_Count 那樣用連續色階去內插）。
         df_plot = df_plot.copy()
-        df_plot['RT_level_cat'] = df_plot['RT_level'].round().astype('Int64').astype(str)
+        cat_col = f"{metric_name}_cat"
+        df_plot[cat_col] = df_plot[metric_name].round().clip(0, 3).astype('Int64').astype(str)
 
         fig = px.choropleth(
             df_plot,
             geojson=tainan_geojson,
             locations='Town',
-            color='RT_level_cat',
+            color=cat_col,
             color_discrete_map=RT_LEVEL_COLORS,
-            category_orders={'RT_level_cat': RT_LEVEL_ORDER},
+            category_orders={cat_col: RT_LEVEL_ORDER},
             hover_name='Town',
-            hover_data={'Town': False, 'RT_level_cat': False, 'RT_level': True}
+            hover_data={'Town': False, cat_col: False, metric_name: True}
         )
         fig.update_layout(legend_title_text="風險等級")
     else:
@@ -153,6 +168,7 @@ def draw_map(df_plot, metric_name):
         paper_bgcolor='rgba(0,0,0,0)'
     )
     return fig
+
 
 
 def get_previous_week_data(year, week):
@@ -180,7 +196,7 @@ def render_map_column(column, metric_name, df_filtered, side):
     with column:
         st.subheader(f"📍 {metric_labels.get(metric_name, metric_name)}")
         has_data = metric_name in df_filtered.columns and (
-            df_filtered[metric_name].sum() > 0 or metric_name == 'RT_level'
+            df_filtered[metric_name].sum() > 0 or metric_name in CATEGORICAL_METRICS
         )
         if has_data:
             st.plotly_chart(
@@ -227,6 +243,7 @@ with tab_map:
             "⏱️ 調整週次觀察疫情變化",
             options=available_weeks_map,
             value=available_weeks_map[-1],
+            format_func=lambda d: pd.Timestamp(d).strftime('%Y-%m-%d'),
             key="map_week"
         )
 
@@ -452,20 +469,23 @@ with tab_data:
     available_weeks_data = weeks_in_year(data_year)
     with dctrl2:
         data_week = st.select_slider(
-            "⏱️ 選擇週次", options=available_weeks_data, value=available_weeks_data[-1], key="data_week"
+            "⏱️ 選擇週次", options=available_weeks_data, value=available_weeks_data[-1],
+            format_func=lambda d: pd.Timestamp(d).strftime('%Y-%m-%d'),
+            key="data_week"
         )
 
     st.markdown("---")
 
     df_filtered_data = filter_by_week(data_year, data_week)
+    data_week_label = pd.Timestamp(data_week).strftime('%Y-%m-%d')
 
-    st.markdown(f"### 📋 {data_year} 年第 {data_week} 週 原始資料")
+    st.markdown(f"### 📋 {data_year} 年 {data_week_label} 那一週 原始資料")
     st.dataframe(df_filtered_data, use_container_width=True)
 
     csv_data = df_filtered_data.to_csv(index=False).encode('utf-8-sig')
     st.download_button(
         label="📥 下載當週資料 (CSV)",
         data=csv_data,
-        file_name=f"tainan_dengue_{data_year}_W{data_week}.csv",
+        file_name=f"tainan_dengue_{data_year}_{data_week_label}.csv",
         mime="text/csv"
     )
