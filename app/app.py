@@ -211,7 +211,7 @@ def render_map_column(column, metric_name, df_filtered, side):
 # ==========================================
 # 主畫面
 # ==========================================
-st.title("🦟 台南市登革熱戰情儀表板")
+st.title("🦟 台南市登革熱分析")
 
 tab_map, tab_trend, tab_data = st.tabs(["🗺️ 地圖總覽", "📈 趨勢分析", "📋 原始資料"])
 
