@@ -221,7 +221,8 @@ if __name__ == '__main__':
 
     print("=== 1. 載入資料與環境設定 ===")
     train_loader, val_loader, test_loader, weight, dim = dengue_dataloader(
-        window_size=windowsize, batch_size=batch, split_year=testyear
+        window_size=windowsize, batch_size=batch, split_year=testyear,
+        val_ranges=[('2015-09-01', '2015-12-31'), ('2022-01-01', '2022-12-31')]
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
