@@ -18,6 +18,7 @@ AI                  float64  成蟲指數
 PI                  float64  蛹指數
 Con100HH            float64  每百戶積水容器數
 RT_level            float64  RT等級(target)
+Medicine            binary   灑藥
 
 遺失值已處理完畢
 你們讀取df後先將變數 Month 、 Town做one-hot-encoding
