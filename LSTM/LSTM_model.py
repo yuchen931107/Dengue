@@ -4,11 +4,32 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import copy
+import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import seaborn as sns
 from sklearn.metrics import f1_score, confusion_matrix, classification_report
 from LSTM_loader import dengue_dataloader
 from set_seed import set_seed
+from config import (WINDOWSIZE, HIDDENSIZE, BATCH, GAMMA, LR, SPLIT_YEAR, TESTYEAR_LABEL,
+                    SAVE_DIR, VAL_RANGES, NUM_CLASSES, LEVEL_NAMES)
+
+#【修正】matplotlib預設字型不含中文，圖表標題裡的中文字會顯示成方框□□□。
+#依序嘗試常見的中文字型，選第一個系統裡實際找得到的；若都沒有就印警告提醒安裝字型。
+_CJK_FONT_CANDIDATES = [
+    'Microsoft JhengHei', 'Microsoft YaHei', 'PingFang TC', 'PingFang SC',
+    'Noto Sans CJK TC', 'Noto Sans CJK SC', 'Noto Sans TC', 'SimHei',
+    'Heiti TC', 'WenQuanYi Zen Hei', 'Arial Unicode MS',
+]
+_available_fonts = {f.name for f in fm.fontManager.ttflist}
+_chosen_font = next((f for f in _CJK_FONT_CANDIDATES if f in _available_fonts), None)
+if _chosen_font:
+    plt.rcParams['font.sans-serif'] = [_chosen_font] + plt.rcParams.get('font.sans-serif', [])
+else:
+    print("[警告] 系統裡找不到常見中文字型，圖表中的中文可能顯示為方框。"
+          "建議安裝 Microsoft JhengHei（Windows）或 Noto Sans CJK TC（Mac/Linux）。")
+plt.rcParams['axes.unicode_minus'] = False   #避免中文字型底下，負號一起變成方框
+
 set_seed(1234)
 '''
 非函數可調參數:
@@ -62,9 +83,16 @@ class FocalLoss(nn.Module):
         self.reduction = reduction
 
     def forward(self, inputs, targets):
-        ce_loss = F.cross_entropy(inputs, targets, weight=self.alpha, reduction='none')
-        pt = torch.exp(-ce_loss)
-        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+        #【修正】原本用 F.cross_entropy(weight=alpha) 算出來的 ce_loss 已經乘過 alpha，
+        #再用 exp(-ce_loss) 算 pt，得到的不是乾淨的機率 p，而是 p 的 alpha 次方，
+        #導致「已經學會的簡單題該降權」這個機制失效（尤其對權重大的稀有類別影響最明顯）。
+        #修正做法：先用 log_softmax 算出不含 alpha 的乾淨 pt，做完降權，最後才乘上類別權重。
+        logp = F.log_softmax(inputs, dim=1)
+        logpt = logp.gather(1, targets.unsqueeze(1)).squeeze(1)
+        pt = logpt.exp()                              #乾淨的 p_t，不受 alpha 影響
+        focal_loss = ((1 - pt) ** self.gamma) * (-logpt)   #先做降權
+        if self.alpha is not None:
+            focal_loss = focal_loss * self.alpha[targets]   #再乘類別權重
         if self.reduction == 'mean': return focal_loss.mean()
         elif self.reduction == 'sum': return focal_loss.sum()
         else: return focal_loss
@@ -79,8 +107,8 @@ def train_model(train_loader, val_loader, dim, weight, device,
     
     print("\n=== 2. 開始模型訓練 (Training Loop) ===")
     
-    #設定模型（登革熱疫情等級固定為 4 級：Level 0~3）
-    model = DengueLSTM(input_size=dim, hidden_size=hiddensize, num_layers=2, num_classes=4).to(device)
+    #設定模型（等級數量統一由 config.py 的 NUM_CLASSES 決定）
+    model = DengueLSTM(input_size=dim, hidden_size=hiddensize, num_layers=2, num_classes=NUM_CLASSES).to(device)
 
     #宣告權重(from loader)
     weights = weight.to(device)
@@ -90,11 +118,16 @@ def train_model(train_loader, val_loader, dim, weight, device,
 
     #當模型猜錯時，Adam 負責指導神經網路要怎麼修改參數lr:learning rate
     #0.001 是 Adam 優化器業界公認的最佳初始值
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=LR)
 
     best_val_loss = float('inf') 
     early_stop_counter = 0
     best_model_weights = None
+    best_epoch = 0
+
+    #記錄每個epoch的train/val loss，訓練結束後畫成曲線圖，方便肉眼判斷過擬合的分岔點
+    train_loss_history = []
+    val_loss_history = []
 
     for epoch in range(EPOCHS):
         #【訓練】
@@ -134,17 +167,35 @@ def train_model(train_loader, val_loader, dim, weight, device,
         print(f'Epoch [{epoch+1}/{EPOCHS}] | Train Loss: {avg_train_loss:.4f} | '
               f'Val Loss: {avg_val_loss:.4f} | Val Macro F1: {macro_f1:.4f}') 
 
+        train_loss_history.append(avg_train_loss)
+        val_loss_history.append(avg_val_loss)
 
         '''if 連續 PATIENCE 個 Epoch val_loss都沒變更好就觸發Early Stopping並回溯'''
         if avg_val_loss < best_val_loss:                                
             best_val_loss = avg_val_loss                               
             best_model_weights = copy.deepcopy(model.state_dict())
+            best_epoch = epoch + 1
             early_stop_counter = 0
         else:
             early_stop_counter += 1
             if early_stop_counter >= PATIENCE:
                 print(f"\n觸發 Early Stopping！模型在 Epoch {epoch+1} 提早停止訓練。")
                 break
+
+    #畫出train/val loss曲線：兩條線開始分岔的地方，就是過擬合開始發生的位置
+    plt.figure(figsize=(8, 5))
+    epochs_ran = range(1, len(train_loss_history) + 1)
+    plt.plot(epochs_ran, train_loss_history, label='Train Loss', color='#4C72B0')
+    plt.plot(epochs_ran, val_loss_history, label='Val Loss', color='#C44E52')
+    if best_epoch > 0:
+        plt.axvline(best_epoch, color='gray', linestyle='--', linewidth=1,
+                    label=f'Best Epoch ({best_epoch})')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Train / Val Loss Curve')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
     #訓練結束，載入最好的權重並存檔
     if best_model_weights is not None:
@@ -172,8 +223,8 @@ def train_model(train_loader, val_loader, dim, weight, device,
 def evaluate_model(model_path, test_loader, dim, hiddensize, device, testyear):
     print(f"\n=== 讀取模型記憶：{model_path} ===")
     
-    #宣告空model（登革熱疫情等級固定為 4 級：Level 0~3）
-    model = DengueLSTM(input_size=dim, hidden_size=hiddensize, num_layers=2, num_classes=4).to(device)
+    #宣告空model（等級數量統一由 config.py 的 NUM_CLASSES 決定）
+    model = DengueLSTM(input_size=dim, hidden_size=hiddensize, num_layers=2, num_classes=NUM_CLASSES).to(device)
     
     #載入model
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
@@ -182,7 +233,7 @@ def evaluate_model(model_path, test_loader, dim, hiddensize, device, testyear):
     all_preds = []
     all_targets = []
 
-    print(f"=== 開始進行 {testyear} 測試集預測 ===")
+    print(f"=== 開始進行推論：{testyear} ===")
     with torch.no_grad():
         for batch_X, batch_y in test_loader:
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
@@ -191,18 +242,27 @@ def evaluate_model(model_path, test_loader, dim, hiddensize, device, testyear):
             all_preds.extend(predicted.cpu().numpy())
             all_targets.extend(batch_y.cpu().numpy())
 
-    target_names = ['Level 0', 'Level 1', 'Level 2', 'Level 3']
+    target_names = LEVEL_NAMES
+    label_ids = list(range(NUM_CLASSES))
 
-    print("\n測試集分類報告 (Classification Report):")
-    print(classification_report(all_targets, all_preds, target_names=target_names, zero_division=0))
+    print(f"\n分類報告 (Classification Report) — {testyear}:")
+    #用 output_dict 拿到結構化結果，把 accuracy、weighted avg 這兩列拿掉，只保留各等級與 macro avg
+    #明確指定labels：避免某個等級在這份資料裡剛好0筆（例如val集稀有等級樣本很少）
+    #導致報告類別數對不上target_names而報錯
+    report_dict = classification_report(all_targets, all_preds, labels=label_ids,
+                                         target_names=target_names,
+                                         zero_division=0, output_dict=True)
+    report_df = pd.DataFrame(report_dict).T
+    report_df = report_df.drop(index=['accuracy', 'weighted avg'], errors='ignore')
+    print(report_df.round(2))
 
-    #混淆矩陣
-    cm = confusion_matrix(all_targets, all_preds)
+    #混淆矩陣（同樣明確指定labels，確保矩陣大小固定，跟xticklabels/yticklabels對得上）
+    cm = confusion_matrix(all_targets, all_preds, labels=label_ids)
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=target_names,
                 yticklabels=target_names)
-    plt.title(f'Dengue Fever Confusion Matrix\n(Test Set: {testyear})', fontsize=14, pad=15)
+    plt.title(f'Dengue Fever Confusion Matrix\n({testyear})', fontsize=14, pad=15)
     plt.xlabel('Predicted Label', fontsize=12)
     plt.ylabel('True Label', fontsize=12)
     plt.tight_layout()
@@ -213,30 +273,48 @@ def evaluate_model(model_path, test_loader, dim, hiddensize, device, testyear):
 # 4.主流程：訓練 → 評估 一次跑完
 # ==========================================
 if __name__ == '__main__':
-    batch = 64
-    windowsize = 6
-    testyear = 2023
-    hiddensize = 128
-    gamma = 2
+    #==============================================================
+    #DEV_MODE=True ：試參數/挑特徵階段用，看的是val（開發用，非最終結果）
+    #DEV_MODE=False：所有設定都定案後，最後只切一次，看的才是真正的test結果
+    #==============================================================
+    DEV_MODE = True
+
+    #所有共用參數都改從 config.py 讀，只要改那邊一個地方就好
+    batch = BATCH
+    windowsize = WINDOWSIZE
+    split_year = SPLIT_YEAR         #實際切分邏輯用的數字，test = Year >= split_year
+    testyear = TESTYEAR_LABEL       #只用來顯示在圖表標題/文字上，如實標示test set實際涵蓋的範圍
+    hiddensize = HIDDENSIZE
+    gamma = GAMMA
 
     print("=== 1. 載入資料與環境設定 ===")
+    #權重固定用公式化 sqrt(class weight balanced)，不再提供手動調整選項；
+    #val_ranges統一從config.py讀，正式版維持None（單純前一年當val）
     train_loader, val_loader, test_loader, weight, dim = dengue_dataloader(
-        window_size=windowsize, batch_size=batch, split_year=testyear,
-        val_ranges=[('2015-09-01', '2015-12-31'), ('2022-01-01', '2022-12-31')]
+        window_size=windowsize, batch_size=batch, split_year=split_year, val_ranges=VAL_RANGES
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     #訓練並取得存檔路徑
     save_path = train_model(
         train_loader=train_loader, val_loader=val_loader, dim=dim,
-        weight=weight, device=device, windowsize=windowsize, hiddensize=hiddensize, gamma=gamma
+        weight=weight, device=device, windowsize=windowsize, hiddensize=hiddensize, gamma=gamma,
+        save_dir=SAVE_DIR
     )
+
+    #依 DEV_MODE 決定評估用哪份資料：開發階段看val，最終定案才看test
+    if DEV_MODE:
+        eval_loader = val_loader
+        eval_label = "Validation（開發中，非最終結果）"
+    else:
+        eval_loader = test_loader
+        eval_label = f"Test Set: {testyear}"
 
     #訓練成功才接著評估，避免 save_path 是 None 導致報錯
     if save_path is not None:
         evaluate_model(
-            model_path=save_path, test_loader=test_loader, dim=dim,
-            hiddensize=hiddensize, device=device, testyear=testyear
+            model_path=save_path, test_loader=eval_loader, dim=dim,
+            hiddensize=hiddensize, device=device, testyear=eval_label
         )
     else:
         print("因訓練未產生模型檔，跳過評估階段。")

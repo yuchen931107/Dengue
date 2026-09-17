@@ -3,6 +3,7 @@ import pandas as pd
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 from LSTM_preprocessing import preprocessing_full
+from config import NUM_CLASSES, PURGE
 
 '''
 **********************************************************************
@@ -23,15 +24,13 @@ dim: 模型輸入的特徵維度大小
 這種刻意挑選的爆發段，開頭幾週最容易被誤傷）。
 **********************************************************************
 '''
-#計算權重
-def compute_cb_weights(y_train, num_classes, beta):
-    """
-    Class-Balanced Loss 權重 (Cui et al., 2019)
-    """
+#計算權重：純公式化 sqrt(class weight balanced)，完全依訓練集樣本數自動決定，不做任何人工調整
+#（避免用test表現去回頭調整權重，造成間接使用測試集資訊的問題）
+def compute_weights(y_train, num_classes):
     counts = np.bincount(y_train, minlength=num_classes).astype(np.float64)
-    effective_num = 1.0 - np.power(beta, counts)
-    weights = np.where(counts > 0, (1.0 - beta) / np.where(effective_num == 0, 1, effective_num), 0.0)
-    weights = weights / weights.sum() * num_classes
+    total = counts.sum()
+    balanced = total / (num_classes * counts)
+    weights = np.sqrt(balanced)
     return weights
 
 
@@ -62,13 +61,16 @@ def create_time_windows(data, feature_cols, target_col, window_size):
 
 
 #對「整個」資料集建立所有時間連續的滑動窗口，並記錄每個窗口 target 那一列的原始 index
-def build_all_windows(data, feature_cols, target_col, window_size):
+#split_labels/purge：開啟 embargo 時，會丟掉「輸入週跨越切分邊界」的窗口（見下方說明）
+def build_all_windows(data, feature_cols, target_col, window_size, split_labels=None, purge=False):
     X, y, target_index = [], [], []
     data = data.copy()
     data['_week_dt'] = pd.to_datetime(data['Week'])
     data = data.reset_index().rename(columns={'index': '_orig_idx'})
 
-    skipped = 0
+    skipped_gap = 0      #時間斷層（週與週之間不是剛好7天）
+    skipped_purge = {}   #embargo：輸入跨切分邊界，依 target 所屬切分分別統計
+
     for _, group in data.groupby('Town'):
         group = group.sort_values('_week_dt').reset_index(drop=True)
         for i in range(len(group) - window_size):
@@ -76,31 +78,54 @@ def build_all_windows(data, feature_cols, target_col, window_size):
             week_diffs = span['_week_dt'].diff().dropna()
             #窗口(含target)內任何一段間隔不是剛好7天，代表跨越了不連續的時間斷層
             if not (week_diffs == pd.Timedelta(days=7)).all():
-                skipped += 1
+                skipped_gap += 1
                 continue
+
+            #【embargo】檢查窗口的「輸入週」跟「target週」是不是都屬於同一個切分。
+            #若不是，代表這個窗口的輸入有一部分來自別的切分：
+            #例如 val 從 2015/10/01 開始，預測 10/03 的窗口輸入是 8/29~9/26（幾乎全在 train），
+            #它跟 train 裡預測 9/26 的窗口有 5 週輸入重疊 —— 模型訓練時等於看過幾乎一樣的東西，
+            #會讓驗證分數虛高。開啟 purge 就把這種跨界窗口整個丟掉。
+            if purge and split_labels is not None:
+                span_splits = split_labels.loc[span['_orig_idx'].values].values
+                if len(set(span_splits)) > 1:
+                    target_split = span_splits[-1]
+                    skipped_purge[target_split] = skipped_purge.get(target_split, 0) + 1
+                    continue
+
             X.append(group.iloc[i : i + window_size][feature_cols].values)
             y.append(group.iloc[i + window_size][target_col])
             target_index.append(group.iloc[i + window_size]['_orig_idx'])
 
-    if skipped > 0:
-        print(f"[build_all_windows] 偵測到時間斷層，已跳過 {skipped} 個不連續窗口")
+    if skipped_gap > 0:
+        print(f"[build_all_windows] 偵測到時間斷層，已跳過 {skipped_gap} 個不連續窗口")
+    if skipped_purge:
+        for sp in ('train', 'val', 'test'):
+            if sp in skipped_purge:
+                print(f"[embargo] {sp}：丟掉 {skipped_purge[sp]} 個輸入跨切分的窗口")
 
     return np.array(X), np.array(y), np.array(target_index)
 
 
 #建立 DataLoader
-def dengue_dataloader(window_size=4, batch_size=64, split_year=2023, beta=0.999, val_ranges=None):
+def dengue_dataloader(window_size=4, batch_size=64, split_year=2023, val_ranges=None, purge=PURGE):
     """
-    val_ranges: 若為 None，val = split_year 前一整年（與舊版行為一致）。
+    權重固定採用公式化 sqrt(class weight balanced)，不提供手動調整選項。
+
+    val_ranges: 預設 None（單純用 split_year 前一年當 val）。
                 若要自訂驗證集區間，傳入 [(start, end), ...] 日期字串 list，
-                例如 [('2015-09-01','2015-12-31'), ('2022-01-01','2022-12-31')]。
-                「窗口的特徵歷史」可以跨越切分邊界往前借用資料，
-                但「窗口是哪個切分」永遠只看 target 那一週的日期。
+                例如 [('2015-10-01','2015-12-31'), ('2022-01-01','2022-12-31')]。
+                「窗口是哪個切分」永遠只看 target 那一週的日期。
+
+    purge:      是否啟用 embargo（切分邊界留空檔）。
+                預設 True：丟掉「輸入週跨越切分邊界」的窗口，避免驗證/測試集裡出現
+                跟訓練集高度重疊的邊界樣本，導致分數虛高。
     """
     full_df, all_features, split_labels = preprocessing_full(split_year=split_year, val_ranges=val_ranges)
 
-    #對整個資料集一次建好所有合法窗口
-    X_all, y_all, target_idx = build_all_windows(full_df, all_features, 'RT_level', window_size)
+    #對整個資料集一次建好所有合法窗口（purge=True 時同時套用 embargo）
+    X_all, y_all, target_idx = build_all_windows(full_df, all_features, 'RT_level', window_size,
+                                                  split_labels=split_labels, purge=purge)
 
     #依照每個窗口 target 那一列原本被標記的切分（train/val/test），分配窗口歸屬
     labels_for_windows = split_labels.loc[target_idx].values
@@ -127,8 +152,7 @@ def dengue_dataloader(window_size=4, batch_size=64, split_year=2023, beta=0.999,
     y_val_tensor   = torch.tensor(y_val,   dtype=torch.long)
     y_test_tensor  = torch.tensor(y_test,  dtype=torch.long)
 
-    num_classes = 4
-    weights = torch.tensor(compute_cb_weights(y_train, num_classes, beta=beta), dtype=torch.float32)
+    weights = torch.tensor(compute_weights(y_train, NUM_CLASSES), dtype=torch.float32)
 
     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
     val_dataset   = TensorDataset(X_val_tensor,   y_val_tensor)

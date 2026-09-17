@@ -69,15 +69,33 @@ def _apply_ohe(train_raw, val_raw, test_raw):
     val_df['Town']   = val_town
     test_df['Town']  = test_town
 
+    #連續型特徵：數值有大小意義、範圍差異大，需要標準化
+    
     continuous_features = [
         'Case_Count', 'RT',
         'Rainfall', 'AvgTemp', 'TempRange',
         'AvgHumidity', 'SunshineHours', 'RainfallHours', 'BI',
         'CI', 'HI', 'LI', 'AI', 'PI', 'Con100HH'
     ]
+    '''
+    continuous_features = [
+        'Case_Count', 'RT','Rainfall', 'AvgTemp', 'TempRange',
+        'SunshineHours', 'RainfallHours', 'BI', 'CI', 'HI', 
+        'Con100HH'
+    ]
+    '''
+    #二元型特徵：本身就是 0/1，不需要（也不該）標準化，直接以原始值輸入模型
+    binary_features = ['Medicine']
+
+    #用 train 資料 fit，val/test 只 transform，避免用到未來資訊
+    ss = StandardScaler()
+    train_df[continuous_features] = ss.fit_transform(train_df[continuous_features])
+    val_df[continuous_features]   = ss.transform(val_df[continuous_features])
+    test_df[continuous_features]  = ss.transform(test_df[continuous_features])
+
     town  = [col for col in train_df.columns if col.startswith('Town_')]
     month = [col for col in train_df.columns if col.startswith('Month_')]
-    all_features = continuous_features + town + month
+    all_features = continuous_features + binary_features + town + month
 
     return train_df, val_df, test_df, all_features
 

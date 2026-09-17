@@ -3,9 +3,10 @@ import torch
 import matplotlib.pyplot as plt
 from sklearn.metrics import f1_score
 
-from LSTM_preprocessing import preprocessing
-from LSTM_loader import create_time_windows
+from LSTM_preprocessing import preprocessing_full
+from LSTM_loader import build_all_windows
 from LSTM_model import DengueLSTM
+from config import WINDOWSIZE, HIDDENSIZE, SPLIT_YEAR, SAVE_DIR, MODEL_FILENAME, VAL_RANGES, NUM_CLASSES, PURGE
 
 '''
 **********************************************************************
@@ -90,22 +91,30 @@ def plot_importance(importances, testyear):
 
 
 if __name__ == '__main__':
-    windowsize = 6
-    testyear = 2023
-    hiddensize = 128
+    #windowsize/hiddensize都改從 config.py 讀，確保跟 LSTM_model.py 訓練時用的一致
+    windowsize = WINDOWSIZE
+    testyear = SPLIT_YEAR   #這裡要用數字（餵給 preprocessing_full 判斷年份），不是顯示用的文字標籤
+    hiddensize = HIDDENSIZE
     n_repeats = 5  # 想要結果更穩定可調大，但跑的時間會變長
 
-    model_path = f'saved_models/dengue_lstm_h{hiddensize}_w{windowsize}.pth'
+    model_path = f'{SAVE_DIR}/{MODEL_FILENAME}'
 
     print("=== 載入資料 ===")
-    train_df, val_df, test_df, all_features = preprocessing(split_year=testyear)
-    X_test, y_test = create_time_windows(test_df, all_features, 'RT_level', windowsize)
+    #跟主程式(dengue_dataloader)使用完全相同的方式建構test集，
+    #確保這裡算出的樣本數/Baseline F1，跟LSTM_model.py的test分類報告可以直接對照
+    #【修正】val_ranges必須跟訓練模型時用的一致，否則train資料範圍不同
+    #→StandardScaler算出的平均數/標準差不同→同一批test資料被餵進去的數字就不一樣
+    full_df, all_features, split_labels = preprocessing_full(split_year=testyear, val_ranges=VAL_RANGES)
+    X_all, y_all, target_idx = build_all_windows(full_df, all_features, 'RT_level', windowsize,
+                                                  split_labels=split_labels, purge=PURGE)
+    test_mask = split_labels.loc[target_idx].values == 'test'
+    X_test, y_test = X_all[test_mask], y_all[test_mask]
     dim = X_test.shape[2]
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print(f"=== 讀取模型記憶：{model_path} ===")
-    model = DengueLSTM(input_size=dim, hidden_size=hiddensize, num_layers=2, num_classes=4).to(device)
+    model = DengueLSTM(input_size=dim, hidden_size=hiddensize, num_layers=2, num_classes=NUM_CLASSES).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
 
     groups = build_feature_groups(all_features)
