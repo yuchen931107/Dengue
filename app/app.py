@@ -18,15 +18,9 @@ def load_data():
     df = pd.read_csv(file_path, encoding='big5')
     df['Town'] = df['Town'].astype(str).str.replace("台南市", "").str.replace("臺南市", "").str.strip()
 
-    # 重要：Week 欄位存的是像 "2012/9/3" 這種沒有補零的日期字串，不是週數字。
-    # 如果直接對這種字串做 sorted()，Python 會照字元比大小（字串排序），
-    # 導致 10、11、12 月（開頭是 "1"）被排到 9 月（開頭是 "9"）前面，
-    # 造成年份裡後半年的週次「消失」在排序結果裡。
-    # 這裡統一轉成真正的日期型態，之後所有排序都改成照日期排序。
+    # 統一轉成真正的日期型態
     df['Week'] = pd.to_datetime(df['Week'], format='%Y/%m/%d')
-
-    # 建立一個「年-週」的排序鍵，讓跨年份的趨勢圖可以正確排序（直接用日期字串即可，
-    # 因為 Week 現在已經是日期型態，天生就能正確排序）。
+    # 建立一個「年-週」的排序鍵
     df['YearWeek'] = df['Week'].dt.strftime('%Y-%m-%d')
     return df
 
@@ -99,11 +93,10 @@ RT_LEVEL_ORDER = ['0', '1', '2']
 # 類別型指標：地圖畫圖跟「有無數據」的判斷都要共用這份清單
 CATEGORICAL_METRICS = ['RT_level'] + available_models
 
-# 在指標選項中加入 Medicine (假設為數值型)
-metric_options = ['Case_Count', 'Medicine', 'RT_level'] + available_models
+# 復原指標選項 (不包含 Medicine)
+metric_options = ['Case_Count', 'RT_level'] + available_models
 metric_labels = {
     'Case_Count': '病例數',
-    'Medicine': '藥物相關 (Medicine)',
     'RT_level': '風險等級 (RT_level)',
     'LSTM': 'LSTM 預測值',
     'SARIMAX': 'SARIMAX 預測值',
@@ -127,14 +120,21 @@ def filter_by_week(year, week):
     return df[(df['Year'] == year) & (df['Week'] == week)].copy()
 
 
-
 def draw_map(df_plot, metric_name):
+    # 設定基礎的 Hover 提示框資訊
+    hover_dict = {'Town': False, metric_name: True}
+    
+    # 如果資料中有 Medicine 欄位，就將其標記在 Hover 提示框中
+    if 'Medicine' in df_plot.columns:
+        hover_dict['Medicine'] = True
+
     if metric_name in CATEGORICAL_METRICS:
-        # 類別型資料：先四捨五入成整數等級，再轉成字串類別，才能用離散配色
-        # 將邊界限制在 0~2 (原本為 0~3)
         df_plot = df_plot.copy()
         cat_col = f"{metric_name}_cat"
         df_plot[cat_col] = df_plot[metric_name].round().clip(0, 2).astype('Int64').astype(str)
+        
+        # 隱藏輔助轉換的欄位
+        hover_dict[cat_col] = False
 
         fig = px.choropleth(
             df_plot,
@@ -144,20 +144,18 @@ def draw_map(df_plot, metric_name):
             color_discrete_map=RT_LEVEL_COLORS,
             category_orders={cat_col: RT_LEVEL_ORDER},
             hover_name='Town',
-            hover_data={'Town': False, cat_col: False, metric_name: True}
+            hover_data=hover_dict
         )
         fig.update_layout(legend_title_text="風險等級")
     else:
-        # 連續型資料 (如 Case_Count, Medicine)
-        color_scale = "Blues" if metric_name == 'Medicine' else "Reds"
         fig = px.choropleth(
             df_plot,
             geojson=tainan_geojson,
             locations='Town',
             color=metric_name,
-            color_continuous_scale=color_scale,
+            color_continuous_scale="Reds",
             hover_name='Town',
-            hover_data={'Town': False, metric_name: True}
+            hover_data=hover_dict
         )
 
     fig.update_geos(fitbounds="locations", visible=False, projection_type="mercator")
@@ -170,7 +168,6 @@ def draw_map(df_plot, metric_name):
     return fig
 
 
-
 def get_previous_week_data(year, week):
     """取得上一週的資料，用來計算 KPI 的增減幅度"""
     weeks = weeks_in_year(year)
@@ -178,7 +175,6 @@ def get_previous_week_data(year, week):
     if idx > 0:
         return filter_by_week(year, weeks[idx - 1])
 
-    # 當週是該年第一週時，嘗試往前一年最後一週找
     prev_years = [y for y in available_years if y < year]
     if prev_years:
         prev_year = prev_years[-1]
@@ -256,8 +252,6 @@ with tab_map:
 
         total_cases = int(df_filtered['Case_Count'].sum()) if 'Case_Count' in df_filtered.columns else 0
         max_rt = int(df_filtered['RT_level'].max()) if 'RT_level' in df_filtered.columns else 0
-        
-        # 最高風險等級現在是 2
         high_risk_count = len(df_filtered[df_filtered['RT_level'] == 2]) if 'RT_level' in df_filtered.columns else 0
 
         # 計算與上週的差異
@@ -347,7 +341,7 @@ with tab_trend:
             'Case_Count': ('Case_Count', 'sum'),
             'RT_level': ('RT_level', 'mean'),
         }
-        # 加入 Medicine 的全市加總計算
+        # 全市加總依然保留 Medicine 供底層資料完整性
         if 'Medicine' in df.columns:
             agg_dict['Medicine'] = ('Medicine', 'sum')
             
@@ -396,7 +390,6 @@ with tab_trend:
                 ))
         fig_rt.update_layout(
             xaxis_title="年-週", yaxis_title="RT_level（等級）",
-            # 更新範圍到只有 0, 1, 2
             yaxis=dict(tickmode='array', tickvals=[0, 1, 2], range=[-0.3, 2.3]),
             margin={"r": 10, "t": 10, "l": 10, "b": 10},
             legend=dict(orientation="h", yanchor="bottom", y=1.02)
@@ -405,7 +398,6 @@ with tab_trend:
                           annotation_text="高風險門檻", annotation_position="top left")
         st.plotly_chart(fig_rt, use_container_width=True)
 
-    # 模型準確度比較表
     if selected_models:
         st.markdown("#### 📐 模型誤差比較")
         rows = []
@@ -433,7 +425,6 @@ with tab_trend:
                         st.info("沒有可比對的資料")
                         continue
 
-                    # 四捨五入並限制在 0~2 級之間 (原本是 0~3)
                     actual_cat = valid['RT_level'].round().clip(0, 2).astype(int)
                     pred_cat = valid[m].round().clip(0, 2).astype(int)
 
