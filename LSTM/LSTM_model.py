@@ -277,7 +277,7 @@ if __name__ == '__main__':
     #DEV_MODE=True ：試參數/挑特徵階段用，看的是val（開發用，非最終結果）
     #DEV_MODE=False：所有設定都定案後，最後只切一次，看的才是真正的test結果
     #==============================================================
-    DEV_MODE = True
+    DEV_MODE = False
 
     #所有共用參數都改從 config.py 讀，只要改那邊一個地方就好
     batch = BATCH
