@@ -1,0 +1,7 @@
+灑藥數據:
+2015-2025
+以里為單位，資料從2015開始mapping to 區
+以二元變數(Medicine)表示是否灑藥
+
+
+https://data.gov.tw/dataset/53961
