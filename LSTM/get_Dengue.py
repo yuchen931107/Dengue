@@ -5,5 +5,3 @@ def Dengue_dataset():
     df = pd.read_csv(url)
     return df
 
-df=Dengue_dataset()
-df.info()

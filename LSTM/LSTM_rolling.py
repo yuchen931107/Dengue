@@ -41,13 +41,13 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #第1折驗證=2014年（訓練=2011~2013），最後一折驗證=SPLIT_YEAR-1（即2022），測試集(2023起)全程不碰
 FOLD_VAL_YEARS = list(range(2014, SPLIT_YEAR))
-'''
+
 CONT = ['Case_Count', 'RT', 'Rainfall', 'AvgTemp', 'TempRange', 'AvgHumidity',
         'SunshineHours', 'RainfallHours', 'BI', 'CI', 'HI', 'LI', 'AI', 'PI', 'Con100HH']
 BINARY = ['Medicine']
 '''
 CONT = ['Case_Count', 'RT']
-
+'''
 
 def _apply_ohe_2way(train_raw, val_raw):
     """跟LSTM_preprocessing._apply_ohe邏輯一致的二份式版本：只用train fit，val只transform。"""
@@ -74,8 +74,8 @@ def _apply_ohe_2way(train_raw, val_raw):
 
     town = [c for c in train_df.columns if c.startswith('Town_')]
     month = [c for c in train_df.columns if c.startswith('Month_')]
-    #all_features = CONT + BINARY + town + month
-    all_features = CONT + town + month
+    all_features = CONT + BINARY + town + month
+    #all_features = CONT + town + month
     return train_df, val_df, all_features
 
 
