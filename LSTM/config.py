@@ -37,4 +37,27 @@ VAL_RANGES = None
 PURGE = True
 
 SAVE_DIR = 'saved_models'
-MODEL_FILENAME = f'dengue_lstm_h{HIDDENSIZE}_w{WINDOWSIZE}.pth'
+
+#特徵集合：'full'（全部18個特徵）或 'reduced'（僅Case_Count/RT，經permutation importance篩選後的版本）
+#LSTM_preprocessing.py 跟 LSTM_rolling.py 都改讀這裡，只要切這一個開關，兩邊就會同步。
+FEATURE_SET = 'full'
+
+_FULL_CONTINUOUS = ['Case_Count', 'RT', 'Rainfall', 'AvgTemp', 'TempRange',
+                     'AvgHumidity', 'SunshineHours', 'RainfallHours', 'BI',
+                     'CI', 'HI', 'LI', 'AI', 'PI', 'Con100HH']
+_FULL_BINARY = ['Medicine']
+
+_REDUCED_CONTINUOUS = ['Case_Count', 'RT']
+_REDUCED_BINARY = []
+
+if FEATURE_SET == 'full':
+    CONTINUOUS_FEATURES = _FULL_CONTINUOUS
+    BINARY_FEATURES = _FULL_BINARY
+elif FEATURE_SET == 'reduced':
+    CONTINUOUS_FEATURES = _REDUCED_CONTINUOUS
+    BINARY_FEATURES = _REDUCED_BINARY
+else:
+    raise ValueError("FEATURE_SET 只能是 'full' 或 'reduced'")
+
+#檔名帶上FEATURE_SET，避免全特徵版跟精簡版模型互相覆蓋，比對時也一眼分得出來
+MODEL_FILENAME = f'dengue_lstm_h{HIDDENSIZE}_w{WINDOWSIZE}_{FEATURE_SET}.pth'

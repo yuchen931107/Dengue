@@ -12,7 +12,7 @@ from get_Dengue import Dengue_dataset
 from LSTM_loader import build_all_windows, compute_weights
 from LSTM_model import DengueLSTM, FocalLoss
 from set_seed import set_seed
-from config import WINDOWSIZE, HIDDENSIZE, BATCH, GAMMA, LR, NUM_CLASSES, SPLIT_YEAR, PURGE, LEVEL_NAMES
+from config import WINDOWSIZE, HIDDENSIZE, BATCH, GAMMA, LR, NUM_CLASSES, SPLIT_YEAR, PURGE, LEVEL_NAMES, CONTINUOUS_FEATURES, BINARY_FEATURES
 
 '''
 **********************************************************************
@@ -41,13 +41,10 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #第1折驗證=2014年（訓練=2011~2013），最後一折驗證=SPLIT_YEAR-1（即2022），測試集(2023起)全程不碰
 FOLD_VAL_YEARS = list(range(2014, SPLIT_YEAR))
+#統一從config.py讀，切FEATURE_SET就能跟LSTM_preprocessing.py同步，不用兩邊各自改一份
+CONT = CONTINUOUS_FEATURES
+BINARY = BINARY_FEATURES
 
-CONT = ['Case_Count', 'RT', 'Rainfall', 'AvgTemp', 'TempRange', 'AvgHumidity',
-        'SunshineHours', 'RainfallHours', 'BI', 'CI', 'HI', 'LI', 'AI', 'PI', 'Con100HH']
-BINARY = ['Medicine']
-'''
-CONT = ['Case_Count', 'RT']
-'''
 
 def _apply_ohe_2way(train_raw, val_raw):
     """跟LSTM_preprocessing._apply_ohe邏輯一致的二份式版本：只用train fit，val只transform。"""
@@ -75,7 +72,6 @@ def _apply_ohe_2way(train_raw, val_raw):
     town = [c for c in train_df.columns if c.startswith('Town_')]
     month = [c for c in train_df.columns if c.startswith('Month_')]
     all_features = CONT + BINARY + town + month
-    #all_features = CONT + town + month
     return train_df, val_df, all_features
 
 

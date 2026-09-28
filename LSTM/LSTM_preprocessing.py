@@ -2,6 +2,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from get_Dengue import Dengue_dataset
 from sklearn.preprocessing import OneHotEncoder
+from config import CONTINUOUS_FEATURES, BINARY_FEATURES
 '''
 **********************************************************************
 本檔案提供兩種前處理進入點：
@@ -69,19 +70,11 @@ def _apply_ohe(train_raw, val_raw, test_raw):
     val_df['Town']   = val_town
     test_df['Town']  = test_town
 
-    #連續型特徵：數值有大小意義、範圍差異大，需要標準化
-    
-    continuous_features = [
-        'Case_Count', 'RT',
-        'Rainfall', 'AvgTemp', 'TempRange',
-        'AvgHumidity', 'SunshineHours', 'RainfallHours', 'BI',
-        'CI', 'HI', 'LI', 'AI', 'PI', 'Con100HH'
-    ]
-    #二元型特徵：本身就是 0/1，不需要（也不該）標準化，直接以原始值輸入模型
-    binary_features = ['Medicine']
-    '''
-    continuous_features = ['Case_Count', 'RT',]
-    '''
+    #連續型特徵、二元型特徵：統一從config.py讀，切FEATURE_SET就能同時切full/reduced，
+    #不用再跑來這裡跟LSTM_rolling.py各自手動改一次、容易忘記同步
+    continuous_features = CONTINUOUS_FEATURES
+    binary_features = BINARY_FEATURES
+
     #用 train 資料 fit，val/test 只 transform，避免用到未來資訊
     ss = StandardScaler()
     train_df[continuous_features] = ss.fit_transform(train_df[continuous_features])
@@ -91,7 +84,6 @@ def _apply_ohe(train_raw, val_raw, test_raw):
     town  = [col for col in train_df.columns if col.startswith('Town_')]
     month = [col for col in train_df.columns if col.startswith('Month_')]
     all_features = continuous_features + binary_features + town + month
-    #all_features = continuous_features + town + month
 
     return train_df, val_df, test_df, all_features
 
