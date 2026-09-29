@@ -2,7 +2,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from get_Dengue import Dengue_dataset
 from sklearn.preprocessing import OneHotEncoder
-from config import CONTINUOUS_FEATURES, BINARY_FEATURES
+from config import CONTINUOUS_FEATURES, BINARY_FEATURES, CATEGORICAL_FEATURES
 '''
 **********************************************************************
 本檔案提供兩種前處理進入點：
@@ -22,6 +22,10 @@ preprocessing_full(split_year, val_ranges)
     對整個時間軸建完所有合法窗口後，才依照每個窗口「target 那一週」
     的日期去分配歸屬——這樣切分邊界附近的資料就不會被誤傷。
     dengue_dataloader 用的是這一版。
+
+preprocessing_final(split_year)
+    正式 fixed-epoch 訓練用：2011 至 split_year 前一年全部歸入 train，
+    不保留 validation；test 仍從 split_year 開始，且只以完整 train fit 前處理器。
 **********************************************************************
 '''
 
@@ -43,49 +47,57 @@ def _split_masks(df, split_year, val_ranges):
     return train_mask, val_mask, test_mask
 
 
-def _apply_ohe(train_raw, val_raw, test_raw):
-    """用 train 資料 fit OHE，三份資料各自 transform，回傳合併好 OHE 欄位、且補回 Town 欄位的 df"""
-    cols_to_encode = ['Town', 'Month']
+def _transform_features(train_raw, *other_raws):
+    """只用 train fit 前處理器，再轉換任意數量的其他資料切分。"""
+    #哪些欄位要One-Hot：統一從config.py讀（CATEGORICAL_FEATURES），不在這裡寫死
+    cols_to_encode = list(CATEGORICAL_FEATURES)
 
+    #Town不管有沒有被當成特徵，建滑動窗口時都要用它分組，所以先存起來、最後補回
     train_town = train_raw['Town'].values
-    val_town   = val_raw['Town'].values
-    test_town  = test_raw['Town'].values
+    other_towns = [raw['Town'].values for raw in other_raws]
 
-    ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
-    train_ohe_arr = ohe.fit_transform(train_raw[cols_to_encode])
-    val_ohe_arr   = ohe.transform(val_raw[cols_to_encode])
-    test_ohe_arr  = ohe.transform(test_raw[cols_to_encode])
+    if cols_to_encode:
+        ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+        train_ohe_arr = ohe.fit_transform(train_raw[cols_to_encode])
+        ohe_columns = list(ohe.get_feature_names_out(cols_to_encode))
 
-    ohe_columns = ohe.get_feature_names_out(cols_to_encode)
-
-    train_ohe_df = pd.DataFrame(train_ohe_arr, columns=ohe_columns, index=train_raw.index)
-    val_ohe_df   = pd.DataFrame(val_ohe_arr, columns=ohe_columns, index=val_raw.index)
-    test_ohe_df  = pd.DataFrame(test_ohe_arr, columns=ohe_columns, index=test_raw.index)
-
-    train_df = pd.concat([train_raw.drop(columns=cols_to_encode), train_ohe_df], axis=1)
-    val_df   = pd.concat([val_raw.drop(columns=cols_to_encode), val_ohe_df], axis=1)
-    test_df  = pd.concat([test_raw.drop(columns=cols_to_encode), test_ohe_df], axis=1)
+        train_ohe_df = pd.DataFrame(train_ohe_arr, columns=ohe_columns, index=train_raw.index)
+        train_df = pd.concat([train_raw.drop(columns=cols_to_encode), train_ohe_df], axis=1)
+        other_dfs = []
+        for raw in other_raws:
+            raw_ohe_arr = ohe.transform(raw[cols_to_encode])
+            raw_ohe_df = pd.DataFrame(raw_ohe_arr, columns=ohe_columns, index=raw.index)
+            other_dfs.append(pd.concat([raw.drop(columns=cols_to_encode), raw_ohe_df], axis=1))
+    else:
+        #這個特徵集不使用任何類別型特徵，就不做One-Hot（OneHotEncoder不能fit在0個欄位上）
+        ohe_columns = []
+        train_df = train_raw.copy()
+        other_dfs = [raw.copy() for raw in other_raws]
 
     train_df['Town'] = train_town
-    val_df['Town']   = val_town
-    test_df['Town']  = test_town
+    for frame, town in zip(other_dfs, other_towns):
+        frame['Town'] = town
 
-    #連續型特徵、二元型特徵：統一從config.py讀，切FEATURE_SET就能同時切full/reduced，
+    #連續型、二元型特徵：統一從config.py讀，切FEATURE_SET就能同步切換，
     #不用再跑來這裡跟LSTM_rolling.py各自手動改一次、容易忘記同步
     continuous_features = CONTINUOUS_FEATURES
     binary_features = BINARY_FEATURES
 
-    #用 train 資料 fit，val/test 只 transform，避免用到未來資訊
+    #用 train 資料 fit，其餘切分只 transform，避免用到未來資訊
     ss = StandardScaler()
     train_df[continuous_features] = ss.fit_transform(train_df[continuous_features])
-    val_df[continuous_features]   = ss.transform(val_df[continuous_features])
-    test_df[continuous_features]  = ss.transform(test_df[continuous_features])
+    for frame in other_dfs:
+        frame[continuous_features] = ss.transform(frame[continuous_features])
 
-    town  = [col for col in train_df.columns if col.startswith('Town_')]
-    month = [col for col in train_df.columns if col.startswith('Month_')]
-    all_features = continuous_features + binary_features + town + month
+    #One-Hot展開後的欄位順序 = cols_to_encode的順序（例如Town_*全部，接著Month_*全部）
+    all_features = continuous_features + binary_features + ohe_columns
 
-    return train_df, val_df, test_df, all_features
+    return (train_df, *other_dfs, all_features)
+
+
+def _apply_ohe(train_raw, val_raw, test_raw):
+    """相容既有 train/val/test 進入點的三份式前處理包裝。"""
+    return _transform_features(train_raw, val_raw, test_raw)
 
 
 #舊版：回傳三份「各自獨立」的 DataFrame（配合 create_time_windows 逐一使用）
@@ -118,6 +130,21 @@ def preprocessing_full(split_year=2023, val_ranges=None):
     test_df  = test_df.assign(_split='test')
 
     full_df = pd.concat([train_df, val_df, test_df]).sort_index()
+    split_labels = full_df.pop('_split')
+
+    return full_df, all_features, split_labels
+
+
+def preprocessing_final(split_year=2023):
+    """正式 fixed-epoch 訓練：以 split_year 前的全部資料 fit，保留 split_year 起的 test。"""
+    df = Dengue_dataset()
+    train_raw = df[df['Year'] < split_year].copy()
+    test_raw = df[df['Year'] >= split_year].copy()
+
+    train_df, test_df, all_features = _transform_features(train_raw, test_raw)
+    train_df = train_df.assign(_split='train')
+    test_df = test_df.assign(_split='test')
+    full_df = pd.concat([train_df, test_df]).sort_index()
     split_labels = full_df.pop('_split')
 
     return full_df, all_features, split_labels

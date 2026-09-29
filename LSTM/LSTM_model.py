@@ -12,7 +12,7 @@ from sklearn.metrics import f1_score, confusion_matrix, classification_report
 from LSTM_loader import dengue_dataloader
 from set_seed import set_seed
 from config import (WINDOWSIZE, HIDDENSIZE, BATCH, GAMMA, LR, SPLIT_YEAR, TESTYEAR_LABEL,
-                    SAVE_DIR, VAL_RANGES, NUM_CLASSES, LEVEL_NAMES)
+                    SAVE_DIR, MODEL_FILENAME, VAL_RANGES, NUM_CLASSES, LEVEL_NAMES)
 
 #【修正】matplotlib預設字型不含中文，圖表標題裡的中文字會顯示成方框□□□。
 #依序嘗試常見的中文字型，選第一個系統裡實際找得到的；若都沒有就印警告提醒安裝字型。
@@ -30,9 +30,12 @@ else:
           "建議安裝 Microsoft JhengHei（Windows）或 Noto Sans CJK TC（Mac/Linux）。")
 plt.rcParams['axes.unicode_minus'] = False   #避免中文字型底下，負號一起變成方框
 
-set_seed(1234)
+from config import SEED
+
+set_seed(SEED)
 '''
 非函數可調參數:
+
 學習率:lr=0.001
 神經網路層數:num_layers=2
 防作弊斷線率:dropout=0.3
@@ -101,14 +104,26 @@ class FocalLoss(nn.Module):
 # ==========================================
 # 2.訓練與存檔函式
 # ==========================================
-def train_model(train_loader, val_loader, dim, weight, device, 
-                hiddensize=128, gamma=2, EPOCHS=50, PATIENCE=7, 
-                windowsize=6, save_dir='saved_models'):
+def train_model(train_loader, val_loader, dim, weight, device,
+                hiddensize=HIDDENSIZE, gamma=GAMMA, EPOCHS=50, PATIENCE=7, 
+                save_dir=SAVE_DIR, fixed_epochs=None):
     
-    print("\n=== 2. 開始模型訓練 (Training Loop) ===")
+    # 決定訓練模式
+    if fixed_epochs is not None:
+        total_epochs = fixed_epochs
+        use_early_stopping = False
+        print(f"\n=== 2. 開始模型訓練 (模式: 固定輪數 = {total_epochs}) ===")
+    else:
+        total_epochs = EPOCHS
+        use_early_stopping = True
+        print(f"\n=== 2. 開始模型訓練 (模式: Early Stopping, 最多 {total_epochs} 輪) ===")
+
+    if use_early_stopping and val_loader is None:
+        raise ValueError("Early Stopping 模式需要 validation loader")
     
     #設定模型（等級數量統一由 config.py 的 NUM_CLASSES 決定）
     model = DengueLSTM(input_size=dim, hidden_size=hiddensize, num_layers=2, num_classes=NUM_CLASSES).to(device)
+
 
     #宣告權重(from loader)
     weights = weight.to(device)
@@ -129,7 +144,11 @@ def train_model(train_loader, val_loader, dim, weight, device,
     train_loss_history = []
     val_loss_history = []
 
-    for epoch in range(EPOCHS):
+    # 如果有指定固定輪數，就跑固定輪數，不使用 early stopping
+    total_epochs = fixed_epochs if fixed_epochs is not None else EPOCHS
+    use_early_stopping = fixed_epochs is None
+
+    for epoch in range(total_epochs):
         #【訓練】
         model.train()  #設成訓練模式
         train_loss = 0.0    
@@ -144,55 +163,58 @@ def train_model(train_loader, val_loader, dim, weight, device,
             optimizer.step()
             train_loss += loss.item()
 
-        #【驗證】用 val_loader，test_loader 
-        model.eval()  #設成驗證模式
-        val_loss = 0.0
-        val_preds, val_targets = [], []
-        with torch.no_grad(): #設定此迴圈不能更新權重，僅驗證
-            for batch_X, batch_y in val_loader:                        
-                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                outputs = model(batch_X)
-                loss = criterion(outputs, batch_y)
-                val_loss += loss.item()
-                _, predicted = torch.max(outputs.data, 1)
-                val_preds.extend(predicted.cpu().numpy())
-                val_targets.extend(batch_y.cpu().numpy())
-                
-        #計算loss
         avg_train_loss = train_loss / len(train_loader)
-        avg_val_loss   = val_loss   / len(val_loader)              
-        #印 macro F1，在不平衡資料下比 accuracy 有診斷意義
-        macro_f1 = f1_score(val_targets, val_preds, average='macro', zero_division=0)
-
-        print(f'Epoch [{epoch+1}/{EPOCHS}] | Train Loss: {avg_train_loss:.4f} | '
-              f'Val Loss: {avg_val_loss:.4f} | Val Macro F1: {macro_f1:.4f}') 
-
         train_loss_history.append(avg_train_loss)
-        val_loss_history.append(avg_val_loss)
 
-        '''if 連續 PATIENCE 個 Epoch val_loss都沒變更好就觸發Early Stopping並回溯'''
-        if avg_val_loss < best_val_loss:                                
-            best_val_loss = avg_val_loss                               
+        if use_early_stopping:
+            #【驗證】只有 Early Stopping 模式使用 validation；固定輪數正式訓練不保留 2022。
+            model.eval()
+            val_loss = 0.0
+            val_preds, val_targets = [], []
+            with torch.no_grad():
+                for batch_X, batch_y in val_loader:
+                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                    outputs = model(batch_X)
+                    val_loss += criterion(outputs, batch_y).item()
+                    _, predicted = torch.max(outputs.data, 1)
+                    val_preds.extend(predicted.cpu().numpy())
+                    val_targets.extend(batch_y.cpu().numpy())
+
+            avg_val_loss = val_loss / len(val_loader)
+            macro_f1 = f1_score(val_targets, val_preds, average='macro', zero_division=0)
+            print(f'Epoch [{epoch+1}/{total_epochs}] | Train Loss: {avg_train_loss:.4f} | '
+                  f'Val Loss: {avg_val_loss:.4f} | Val Macro F1: {macro_f1:.4f}')
+            val_loss_history.append(avg_val_loss)
+            '''if 連續 PATIENCE 個 Epoch val_loss都沒變更好就觸發Early Stopping並回溯'''
+            if avg_val_loss < best_val_loss:                                
+                best_val_loss = avg_val_loss                               
+                best_model_weights = copy.deepcopy(model.state_dict())
+                best_epoch = epoch + 1
+                early_stop_counter = 0
+            else:
+                early_stop_counter += 1
+                if early_stop_counter >= PATIENCE:
+                    print(f"\n觸發 Early Stopping！模型在 Epoch {epoch+1} 提早停止訓練。")
+                    break
+        else:
+            print(f'Epoch [{epoch+1}/{total_epochs}] | Train Loss: {avg_train_loss:.4f}')
+            #固定輪數模式下，每一輪都暫存權重（最後一輪就是最終權重）
             best_model_weights = copy.deepcopy(model.state_dict())
             best_epoch = epoch + 1
-            early_stop_counter = 0
-        else:
-            early_stop_counter += 1
-            if early_stop_counter >= PATIENCE:
-                print(f"\n觸發 Early Stopping！模型在 Epoch {epoch+1} 提早停止訓練。")
-                break
 
     #畫出train/val loss曲線：兩條線開始分岔的地方，就是過擬合開始發生的位置
     plt.figure(figsize=(8, 5))
     epochs_ran = range(1, len(train_loss_history) + 1)
+
     plt.plot(epochs_ran, train_loss_history, label='Train Loss', color='#4C72B0')
-    plt.plot(epochs_ran, val_loss_history, label='Val Loss', color='#C44E52')
-    if best_epoch > 0:
+    if val_loss_history:
+        plt.plot(epochs_ran, val_loss_history, label='Val Loss', color='#C44E52')
+    if use_early_stopping and best_epoch > 0:
         plt.axvline(best_epoch, color='gray', linestyle='--', linewidth=1,
                     label=f'Best Epoch ({best_epoch})')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title('Train / Val Loss Curve')
+    plt.title('Train / Val Loss Curve' if val_loss_history else 'Train Loss Curve')
     plt.legend()
     plt.tight_layout()
     plt.show()
@@ -206,14 +228,15 @@ def train_model(train_loader, val_loader, dim, weight, device,
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         
-        # 檔名可以包含參數，方便未來做實驗對照
-        save_path = os.path.join(save_dir, f'dengue_lstm_h{hiddensize}_w{windowsize}.pth')
+        # 檔名統一從config.py讀，不在這裡自己重組一次
+        # （避免這裡的組法跟config.MODEL_FILENAME不同步，導致LSTM_importance.py讀不到檔案）
+        save_path = os.path.join(save_dir, MODEL_FILENAME)
         torch.save(model.state_dict(), save_path)
         print(f"模型參數已成功儲存至：{save_path}")
         
         return save_path
 
-    print("警告：訓練過程中沒有出現任何有效的 val_loss，模型未儲存。")
+    print("警告：訓練過程中沒有產生可儲存的模型權重。")
     return None
 
 
@@ -279,28 +302,34 @@ if __name__ == '__main__':
     #==============================================================
     DEV_MODE = False
 
-    #所有共用參數都改從 config.py 讀，只要改那邊一個地方就好
+    #所有共用參數都改從 config.py 讀
+    from config import (BATCH, WINDOWSIZE, HIDDENSIZE, GAMMA, LR, SPLIT_YEAR, 
+                        TESTYEAR_LABEL, VAL_RANGES, FIXED_EPOCHS, SAVE_DIR)
+    
     batch = BATCH
     windowsize = WINDOWSIZE
-    split_year = SPLIT_YEAR         #實際切分邏輯用的數字，test = Year >= split_year
-    testyear = TESTYEAR_LABEL       #只用來顯示在圖表標題/文字上，如實標示test set實際涵蓋的範圍
+    split_year = SPLIT_YEAR         
+    testyear = TESTYEAR_LABEL       
     hiddensize = HIDDENSIZE
     gamma = GAMMA
 
-    print("=== 1. 載入資料與環境設定 ===")
-    #權重固定用公式化 sqrt(class weight balanced)，不再提供手動調整選項；
-    #val_ranges統一從config.py讀，正式版維持None（單純前一年當val）
+    print(f"=== 1. 載入資料與環境設定 (FIXED_EPOCHS: {FIXED_EPOCHS}) ===")
+    # ... 略 ...
+    final_training = not DEV_MODE and FIXED_EPOCHS is not None
     train_loader, val_loader, test_loader, weight, dim = dengue_dataloader(
-        window_size=windowsize, batch_size=batch, split_year=split_year, val_ranges=VAL_RANGES
+        window_size=windowsize, batch_size=batch, split_year=split_year, val_ranges=VAL_RANGES,
+        final_training=final_training
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     #訓練並取得存檔路徑
     save_path = train_model(
         train_loader=train_loader, val_loader=val_loader, dim=dim,
-        weight=weight, device=device, windowsize=windowsize, hiddensize=hiddensize, gamma=gamma,
-        save_dir=SAVE_DIR
+        weight=weight, device=device, hiddensize=hiddensize, gamma=gamma,
+        save_dir=SAVE_DIR, fixed_epochs=FIXED_EPOCHS
     )
+
+
 
     #依 DEV_MODE 決定評估用哪份資料：開發階段看val，最終定案才看test
     if DEV_MODE:

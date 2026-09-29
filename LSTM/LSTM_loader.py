@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import TensorDataset, DataLoader
-from LSTM_preprocessing import preprocessing_full
-from config import NUM_CLASSES, PURGE
+from LSTM_preprocessing import preprocessing_final, preprocessing_full
+from config import NUM_CLASSES, PURGE, WINDOWSIZE, BATCH, SPLIT_YEAR
 
 '''
 **********************************************************************
@@ -108,7 +108,8 @@ def build_all_windows(data, feature_cols, target_col, window_size, split_labels=
 
 
 #建立 DataLoader
-def dengue_dataloader(window_size=4, batch_size=64, split_year=2023, val_ranges=None, purge=PURGE):
+def dengue_dataloader(window_size=WINDOWSIZE, batch_size=BATCH, split_year=SPLIT_YEAR, val_ranges=None,
+                      purge=PURGE, final_training=False):
     """
     權重固定採用公式化 sqrt(class weight balanced)，不提供手動調整選項。
 
@@ -120,8 +121,13 @@ def dengue_dataloader(window_size=4, batch_size=64, split_year=2023, val_ranges=
     purge:      是否啟用 embargo（切分邊界留空檔）。
                 預設 True：丟掉「輸入週跨越切分邊界」的窗口，避免驗證/測試集裡出現
                 跟訓練集高度重疊的邊界樣本，導致分數虛高。
+
+    final_training: True 時不切 validation，將 split_year 前的全部資料用於固定輪數正式訓練。
     """
-    full_df, all_features, split_labels = preprocessing_full(split_year=split_year, val_ranges=val_ranges)
+    if final_training:
+        full_df, all_features, split_labels = preprocessing_final(split_year=split_year)
+    else:
+        full_df, all_features, split_labels = preprocessing_full(split_year=split_year, val_ranges=val_ranges)
 
     #對整個資料集一次建好所有合法窗口（purge=True 時同時套用 embargo）
     X_all, y_all, target_idx = build_all_windows(full_df, all_features, 'RT_level', window_size,
@@ -140,26 +146,30 @@ def dengue_dataloader(window_size=4, batch_size=64, split_year=2023, val_ranges=
 
     #(防錯)
     assert len(X_train) > 0, f"訓練集樣本為空，請檢查 split_year={split_year} 設定"
-    assert len(X_val)   > 0, f"驗證集樣本為空，請檢查 val_ranges/{split_year} 設定"
+    if not final_training:
+        assert len(X_val) > 0, f"驗證集樣本為空，請檢查 val_ranges/{split_year} 設定"
     assert len(X_test)  > 0, f"測試集樣本為空，請檢查 split_year={split_year} 設定"
 
     dim = X_train.shape[2]
 
     X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
-    X_val_tensor   = torch.tensor(X_val,   dtype=torch.float32)
     X_test_tensor  = torch.tensor(X_test,  dtype=torch.float32)
     y_train_tensor = torch.tensor(y_train, dtype=torch.long)
-    y_val_tensor   = torch.tensor(y_val,   dtype=torch.long)
     y_test_tensor  = torch.tensor(y_test,  dtype=torch.long)
 
     weights = torch.tensor(compute_weights(y_train, NUM_CLASSES), dtype=torch.float32)
 
     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-    val_dataset   = TensorDataset(X_val_tensor,   y_val_tensor)
     test_dataset  = TensorDataset(X_test_tensor,  y_test_tensor)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False)
     test_loader  = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
+
+    if final_training:
+        val_loader = None
+    else:
+        val_dataset = TensorDataset(torch.tensor(X_val, dtype=torch.float32),
+                                    torch.tensor(y_val, dtype=torch.long))
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     return train_loader, val_loader, test_loader, weights, dim

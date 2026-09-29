@@ -12,7 +12,9 @@ from get_Dengue import Dengue_dataset
 from LSTM_loader import build_all_windows, compute_weights
 from LSTM_model import DengueLSTM, FocalLoss
 from set_seed import set_seed
-from config import WINDOWSIZE, HIDDENSIZE, BATCH, GAMMA, LR, NUM_CLASSES, SPLIT_YEAR, PURGE, LEVEL_NAMES, CONTINUOUS_FEATURES, BINARY_FEATURES
+from config import (WINDOWSIZE, HIDDENSIZE, BATCH, GAMMA, LR, NUM_CLASSES, SPLIT_YEAR, PURGE, 
+                    LEVEL_NAMES, CONTINUOUS_FEATURES, BINARY_FEATURES, CATEGORICAL_FEATURES, SEED)
+
 
 '''
 **********************************************************************
@@ -44,24 +46,33 @@ FOLD_VAL_YEARS = list(range(2014, SPLIT_YEAR))
 #統一從config.py讀，切FEATURE_SET就能跟LSTM_preprocessing.py同步，不用兩邊各自改一份
 CONT = CONTINUOUS_FEATURES
 BINARY = BINARY_FEATURES
+CATEGORICAL = CATEGORICAL_FEATURES
 
 
 def _apply_ohe_2way(train_raw, val_raw):
     """跟LSTM_preprocessing._apply_ohe邏輯一致的二份式版本：只用train fit，val只transform。"""
-    cols_to_encode = ['Town', 'Month']
+    #哪些欄位要One-Hot：統一從config.py讀（CATEGORICAL_FEATURES），不在這裡寫死
+    cols_to_encode = list(CATEGORICAL)
     train_town = train_raw['Town'].values
     val_town = val_raw['Town'].values
 
-    ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
-    train_ohe_arr = ohe.fit_transform(train_raw[cols_to_encode])
-    val_ohe_arr = ohe.transform(val_raw[cols_to_encode])
-    ohe_columns = ohe.get_feature_names_out(cols_to_encode)
+    if cols_to_encode:
+        ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+        train_ohe_arr = ohe.fit_transform(train_raw[cols_to_encode])
+        val_ohe_arr = ohe.transform(val_raw[cols_to_encode])
+        ohe_columns = list(ohe.get_feature_names_out(cols_to_encode))
 
-    train_ohe_df = pd.DataFrame(train_ohe_arr, columns=ohe_columns, index=train_raw.index)
-    val_ohe_df = pd.DataFrame(val_ohe_arr, columns=ohe_columns, index=val_raw.index)
+        train_ohe_df = pd.DataFrame(train_ohe_arr, columns=ohe_columns, index=train_raw.index)
+        val_ohe_df = pd.DataFrame(val_ohe_arr, columns=ohe_columns, index=val_raw.index)
 
-    train_df = pd.concat([train_raw.drop(columns=cols_to_encode), train_ohe_df], axis=1)
-    val_df = pd.concat([val_raw.drop(columns=cols_to_encode), val_ohe_df], axis=1)
+        train_df = pd.concat([train_raw.drop(columns=cols_to_encode), train_ohe_df], axis=1)
+        val_df = pd.concat([val_raw.drop(columns=cols_to_encode), val_ohe_df], axis=1)
+    else:
+        #這個特徵集不使用任何類別型特徵，就不做One-Hot（OneHotEncoder不能fit在0個欄位上）
+        ohe_columns = []
+        train_df, val_df = train_raw.copy(), val_raw.copy()
+
+    #Town不管有沒有被當成特徵，建滑動窗口時都要用它分組
     train_df['Town'] = train_town
     val_df['Town'] = val_town
 
@@ -69,9 +80,7 @@ def _apply_ohe_2way(train_raw, val_raw):
     train_df[CONT] = ss.fit_transform(train_df[CONT])
     val_df[CONT] = ss.transform(val_df[CONT])
 
-    town = [c for c in train_df.columns if c.startswith('Town_')]
-    month = [c for c in train_df.columns if c.startswith('Month_')]
-    all_features = CONT + BINARY + town + month
+    all_features = CONT + BINARY + ohe_columns
     return train_df, val_df, all_features
 
 
@@ -155,7 +164,13 @@ def train_fold(Xtr, ytr, Xva, yva, dim, seed, epochs=50, patience=7, quiet=True)
 
     macro_f1 = f1_score(yva, preds, average='macro', zero_division=0, labels=list(range(NUM_CLASSES)))
     per_class = f1_score(yva, preds, average=None, zero_division=0, labels=list(range(NUM_CLASSES)))
-    return model, best_epoch, macro_f1, per_class
+    # 【新增】只平均「這一折實際存在」的類別
+    present = sorted(set(yva.tolist()))
+    macro_f1 = f1_score(yva, preds, average='macro', zero_division=0, labels=present)
+    per_class = f1_score(yva, preds, average=None, zero_division=0, labels=list(range(NUM_CLASSES)))
+    n_pos = np.bincount(yva, minlength=NUM_CLASSES)
+    
+    return model, best_epoch, macro_f1, per_class, n_pos
 
 
 def run_rolling_cv(seed=1234, epochs=50, patience=7):
@@ -172,7 +187,8 @@ def run_rolling_cv(seed=1234, epochs=50, patience=7):
             continue
 
         dim = Xtr.shape[2]
-        _, best_epoch, macro_f1, per_class = train_fold(Xtr, ytr, Xva, yva, dim, seed, epochs, patience)
+        # 接收新增的 n_pos
+        _, best_epoch, macro_f1, per_class, n_pos = train_fold(Xtr, ytr, Xva, yva, dim, seed, epochs, patience)
 
         rows.append({
             'val_year': val_year,
@@ -182,6 +198,7 @@ def run_rolling_cv(seed=1234, epochs=50, patience=7):
             'best_epoch': best_epoch,
             'macro_f1': macro_f1,
             'per_class': np.round(per_class, 3).tolist(),
+            'n_pos': n_pos.tolist(),  # 【新增】把這一折各級別的實際筆數存起來
         })
         elapsed = time.time() - t0
         print(f"[第{len(rows)}折] val={val_year} (train=2011-{val_year-1}) | "
@@ -195,20 +212,28 @@ def run_rolling_cv(seed=1234, epochs=50, patience=7):
 def summarise(result_df):
     macro = result_df['macro_f1'].to_numpy()
     per_class_matrix = np.stack(result_df['per_class'].to_list())   #shape: (折數, NUM_CLASSES)
+    n_pos_matrix = np.stack(result_df['n_pos'].to_list())           # 【新增】取出各折各類別筆數
 
     print("\n" + "=" * 60)
     print(f"=== {len(result_df)} 折平均結果 ===")
     print(f"Macro F1： {macro.mean():.4f} ± {macro.std(ddof=1):.4f}")
+    
     for i, name in enumerate(LEVEL_NAMES):
-        col = per_class_matrix[:, i]
-        print(f"{name} F1： {col.mean():.4f} ± {col.std(ddof=1):.4f}")
+        # 【修改】只挑出「該折驗證集確實有這個類別 (n_pos > 0)」的成績來平均
+        valid_folds_mask = n_pos_matrix[:, i] > 0
+        if valid_folds_mask.sum() > 0:
+            col_valid = per_class_matrix[valid_folds_mask, i]
+            print(f"{name} F1： {col_valid.mean():.4f} ± {col_valid.std(ddof=1):.4f} (基於 {valid_folds_mask.sum()} 折有效驗證)")
+        else:
+            print(f"{name} F1： 無效 (所有折均無此類別)")
+            
     print("=" * 60)
     print("\n※ 測試集(2023起)全程未使用，以上只是內部驗證結果，")
     print("   拿來挑超參數/比較做法；最終定案後仍須另外用完整train重新訓練、跑一次test。")
 
-
 if __name__ == '__main__':
-    result_df = run_rolling_cv(seed=1234, epochs=50, patience=7)
+    result_df = run_rolling_cv(seed=SEED, epochs=50, patience=7)
+
     print("\n=== 各折明細 ===")
     print(result_df[['val_year', 'train_years', 'n_train', 'n_val', 'best_epoch', 'macro_f1']]
           .to_string(index=False))

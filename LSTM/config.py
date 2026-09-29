@@ -8,17 +8,27 @@
 繼續留在各自腳本裡就好，不用硬塞進這裡。
 **********************************************************************
 '''
+SEED = 1234         # 隨機種子碼，確保實驗可重現
+WINDOWSIZE = 4      #滑動時間窗大小（週數），影響模型輸入形狀 → 存檔/讀檔都要對齊
 
-WINDOWSIZE = 6      #滑動時間窗大小（週數），影響模型輸入形狀 → 存檔/讀檔都要對齊
 HIDDENSIZE = 64     #LSTM 隱藏層大小，影響模型結構 → 存檔/讀檔都要對齊
 BATCH = 64           #訓練用的batch size
-GAMMA = 2.5          #Focal Loss 的 gamma 參數
+GAMMA = 2         #Focal Loss 的 gamma 參數
 LR = 0.001           #Adam optimizer的學習率
+
+'''
+正式訓練時使用的固定輪數 (由移除 RT 後的 Rolling CV 9 折 best_epoch 中位數決定)
+設為整數時，最終模型會以 2011-2022 全部資料訓練，不另外切 2022 當 validation。
+If 設定為 None 則使用 Early Stopping
+'''
+FIXED_EPOCHS = 12
+
 
 #分級方式（三級）：
 #  Level 0：RT <= 0.01      → 無有效訊號
 #  Level 1：0.01 < RT <= 1  → 有真實訊號，但低於流行病學閾值
 #  Level 2：RT > 1          → 高於閾值（Rt=1是Cori et al. 2013框架下唯一有實質意義的門檻），疫情成長中
+
 NUM_CLASSES = 3
 LEVEL_NAMES = ['Level 0', 'Level 1', 'Level 2']
 
@@ -36,28 +46,51 @@ VAL_RANGES = None
 #模型等於考過類似的題目，驗證/測試分數會虛高。建議維持 True。
 PURGE = True
 
-SAVE_DIR = 'saved_models'
+#==========================================================================
+#特徵設定：所有「用哪些特徵建模」的決定都集中在這裡，
+#LSTM_preprocessing.py、LSTM_rolling.py、LSTM_importance.py 都改讀這裡，
+#只要切 FEATURE_SET 或改下面的清單，所有腳本就會同步，不用各自手動對齊。
+#
+#三種特徵型態，處理方式不同：
+#  continuous  ：連續型，會做標準化（StandardScaler，只用train fit）
+#  binary      ：本身就是0/1，不標準化，直接輸入模型
+#  categorical ：類別型，會做One-Hot編碼（只用train fit），每個類別展開成一欄
+#
+#注意：'Town'即使不列在categorical裡，程式仍會保留原始Town欄位，
+#      因為建滑動窗口時要依Town分組，這跟它是不是模型特徵無關。
+#==========================================================================
+FEATURE_SETS = {
+    #全部特徵（18組：15連續 + 1二元 + Town + Month）
+    'full': {
+        'continuous': ['Case_Count', 'RT', 'Rainfall', 'AvgTemp', 'TempRange',
+                       'AvgHumidity', 'SunshineHours', 'RainfallHours', 'BI',
+                       'CI', 'HI', 'LI', 'AI', 'PI', 'Con100HH'],
+        'binary': ['Medicine'],
+        'categorical': ['Town', 'Month'],
+    },
+    #精簡版：經permutation importance + 9折rolling CV確認後保留的特徵
+    'reduced': {
+        'continuous': ['Case_Count', 'RT'],
+        'binary': [],
+        'categorical': ['Town', 'Month'],
+    },
+    #想再測別的組合（例如拿掉Town）：在這裡加一個條目，再把FEATURE_SET改成它的名字即可
+}
 
-#特徵集合：'full'（全部18個特徵）或 'reduced'（僅Case_Count/RT，經permutation importance篩選後的版本）
-#LSTM_preprocessing.py 跟 LSTM_rolling.py 都改讀這裡，只要切這一個開關，兩邊就會同步。
-FEATURE_SET = 'full'
+FEATURE_SET = 'reduced'
 
-_FULL_CONTINUOUS = ['Case_Count', 'RT', 'Rainfall', 'AvgTemp', 'TempRange',
-                     'AvgHumidity', 'SunshineHours', 'RainfallHours', 'BI',
-                     'CI', 'HI', 'LI', 'AI', 'PI', 'Con100HH']
-_FULL_BINARY = ['Medicine']
+if FEATURE_SET not in FEATURE_SETS:
+    raise ValueError(f"FEATURE_SET 必須是 {list(FEATURE_SETS)} 其中之一，目前是 {FEATURE_SET!r}")
 
-_REDUCED_CONTINUOUS = ['Case_Count', 'RT']
-_REDUCED_BINARY = []
+CONTINUOUS_FEATURES = FEATURE_SETS[FEATURE_SET]['continuous']
+BINARY_FEATURES = FEATURE_SETS[FEATURE_SET]['binary']
+CATEGORICAL_FEATURES = FEATURE_SETS[FEATURE_SET]['categorical']
 
-if FEATURE_SET == 'full':
-    CONTINUOUS_FEATURES = _FULL_CONTINUOUS
-    BINARY_FEATURES = _FULL_BINARY
-elif FEATURE_SET == 'reduced':
-    CONTINUOUS_FEATURES = _REDUCED_CONTINUOUS
-    BINARY_FEATURES = _REDUCED_BINARY
-else:
-    raise ValueError("FEATURE_SET 只能是 'full' 或 'reduced'")
+#模型目錄與正式特徵集同步，避免不同特徵實驗的模型互相覆蓋。
+SAVE_DIR = f'saved_models_{FEATURE_SET}'
 
-#檔名帶上FEATURE_SET，避免全特徵版跟精簡版模型互相覆蓋，比對時也一眼分得出來
-MODEL_FILENAME = f'dengue_lstm_h{HIDDENSIZE}_w{WINDOWSIZE}_{FEATURE_SET}.pth'
+#檔名帶上GAMMA跟FEATURE_SET，避免不同超參數/特徵組合的模型互相覆蓋，比對時也一眼分得出來
+MODEL_FILENAME = (f'dengue_lstm_h{HIDDENSIZE}'
+                   f'_w{WINDOWSIZE}'
+                   f'_g{GAMMA}'
+                   f'_{FEATURE_SET}.pth')

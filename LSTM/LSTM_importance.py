@@ -3,11 +3,12 @@ import torch
 import matplotlib.pyplot as plt
 from sklearn.metrics import f1_score
 
-from LSTM_preprocessing import preprocessing_full
+from LSTM_preprocessing import preprocessing_final, preprocessing_full
 from LSTM_loader import build_all_windows
 from LSTM_model import DengueLSTM
 from LSTM_rolling import make_fold_data, train_fold
-from config import WINDOWSIZE, HIDDENSIZE, SPLIT_YEAR, SAVE_DIR, MODEL_FILENAME, VAL_RANGES, NUM_CLASSES, PURGE
+from config import (WINDOWSIZE, HIDDENSIZE, SPLIT_YEAR, SAVE_DIR, MODEL_FILENAME,
+                    VAL_RANGES, FIXED_EPOCHS, NUM_CLASSES, PURGE, CATEGORICAL_FEATURES, SEED)
 
 '''
 **********************************************************************
@@ -16,9 +17,10 @@ from config import WINDOWSIZE, HIDDENSIZE, SPLIT_YEAR, SAVE_DIR, MODEL_FILENAME,
       重新預測一次，看 Macro F1 掉多少。
       掉得越多 → 代表模型越依賴這個特徵 → 越重要。
 
-注意：Town_*、Month_* 是 One-Hot 展開後的欄位，
+注意：類別型特徵（config.py 的 CATEGORICAL_FEATURES，如 Town、Month）
+      是 One-Hot 展開後的欄位，
       單獨打亂其中一欄沒有意義，所以會把同一類別的所有欄位
-      綁在一起、同時打亂，評估「Town 整組」「Month 整組」的重要性。
+      綁在一起、同時打亂，評估「Town 整組」「Month 整組」這類整組的重要性。
 
 兩種模式（MODE，見下方 __main__）：
   'fold2015'：借用 LSTM_rolling.py 裡「val=2015」那一折（train=2011-2014，
@@ -34,14 +36,18 @@ from config import WINDOWSIZE, HIDDENSIZE, SPLIT_YEAR, SAVE_DIR, MODEL_FILENAME,
 **********************************************************************
 '''
 
-#把 One-Hot 展開的欄位歸併成同一組，其餘連續特徵各自獨立一組
+#把 One-Hot 展開的欄位歸併成同一組，其餘連續/二元特徵各自獨立一組
+#哪些是類別型特徵，統一從config.py的CATEGORICAL_FEATURES讀，不在這裡寫死
+_CATEGORY_LABELS = {'Town': 'Town（區域類別）', 'Month': 'Month（月份類別）'}
+
 def build_feature_groups(all_features):
     groups = {}
     for i, col in enumerate(all_features):
-        if col.startswith('Town_'):
-            groups.setdefault('Town（區域類別）', []).append(i)
-        elif col.startswith('Month_'):
-            groups.setdefault('Month（月份類別）', []).append(i)
+        #One-Hot欄位命名為「原欄位名_類別值」，例如Town_七股區、Month_3
+        matched = next((c for c in CATEGORICAL_FEATURES if col.startswith(f'{c}_')), None)
+        if matched is not None:
+            label = _CATEGORY_LABELS.get(matched, f'{matched}（類別）')
+            groups.setdefault(label, []).append(i)
         else:
             groups[col] = [i]
     return groups
@@ -109,7 +115,7 @@ def plot_importance(importances, label):
 #兩種模式各自負責「準備model + 準備X_eval/y_eval + 準備all_features」
 #=====================================================================
 
-def _prepare_fold2015(seed=1234):
+def _prepare_fold2015(seed=12345):
     """訓練一個臨時模型（僅供特徵重要性分析用，不存檔），並回傳val=2015的評估資料"""
     from get_Dengue import Dengue_dataset
 
@@ -118,7 +124,7 @@ def _prepare_fold2015(seed=1234):
     df = Dengue_dataset()
     Xtr, ytr, Xva, yva, all_features = make_fold_data(df, VAL_YEAR_FOR_IMPORTANCE, WINDOWSIZE)
 
-    model, best_epoch, macro_f1, per_class = train_fold(Xtr, ytr, Xva, yva, Xtr.shape[2], seed)
+    model, best_epoch, macro_f1, per_class, _ = train_fold(Xtr, ytr, Xva, yva, Xtr.shape[2], seed)
     print(f"停在第{best_epoch}輪 | val macro F1={macro_f1:.4f} | 各級F1={per_class.round(3).tolist()}\n")
 
     label = f"Val={VAL_YEAR_FOR_IMPORTANCE}（挑特徵專用，非最終結果）"
@@ -131,11 +137,11 @@ def _prepare_test(device):
     testyear = SPLIT_YEAR   #這裡要用數字（餵給 preprocessing_full 判斷年份），不是顯示用的文字標籤
 
     print("=== 載入資料 ===")
-    #跟主程式(dengue_dataloader)使用完全相同的方式建構test集，
-    #確保這裡算出的樣本數/Baseline F1，跟LSTM_model.py的test分類報告可以直接對照
-    #【修正】val_ranges必須跟訓練模型時用的一致，否則train資料範圍不同
-    #→StandardScaler算出的平均數/標準差不同→同一批test資料被餵進去的數字就不一樣
-    full_df, all_features, split_labels = preprocessing_full(split_year=testyear, val_ranges=VAL_RANGES)
+    #跟主程式使用完全相同的切分與標準化，確保 test 特徵與模型訓練時一致。
+    if FIXED_EPOCHS is not None:
+        full_df, all_features, split_labels = preprocessing_final(split_year=testyear)
+    else:
+        full_df, all_features, split_labels = preprocessing_full(split_year=testyear, val_ranges=VAL_RANGES)
     X_all, y_all, target_idx = build_all_windows(full_df, all_features, 'RT_level', WINDOWSIZE,
                                                   split_labels=split_labels, purge=PURGE)
     test_mask = split_labels.loc[target_idx].values == 'test'
@@ -157,7 +163,7 @@ if __name__ == '__main__':
     #==============================================================
     MODE = 'fold2015'
     n_repeats = 5  # 想要結果更穩定可調大，但跑的時間會變長
-    seed = 1234    # fold2015模式下，換這個數字重跑可以檢查排序穩不穩
+    seed = SEED    # fold2015模式下，換這個數字重跑可以檢查排序穩不穩
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
