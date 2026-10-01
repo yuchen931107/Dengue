@@ -1,0 +1,23 @@
+資料集:
+Week                object   週次
+Town                object   區域
+Year                int64    年份
+Month               int64    月份
+Case_Count          float64  病例數
+AvgTemp             float64  平均氣溫
+TempRange           float64  溫差
+AvgHumidity         float64  平均相對溼度
+SunshineHours       float64  日照時數
+RainfallHours       float64  降雨時數
+Rainfall            float64  降雨量
+BI                  float64  布式指數
+CI                  float64  容器指數
+HI                  float64  住宅指數
+LI                  float64  幼蟲指數
+AI                  float64  成蟲指數
+PI                  float64  蛹指數
+Con100HH            float64  每百戶積水容器數
+RT_level            float64  RT等級(target)
+Medicine            binary   灑藥
+
+病媒蚊計算方式參考:https://od.cdc.gov.tw/eic/MosIndex_CodeBook.pdf
