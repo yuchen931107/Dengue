@@ -3,24 +3,23 @@ import torch
 import matplotlib.pyplot as plt
 from sklearn.metrics import f1_score
 
-from LSTM_preprocessing import preprocessing_final, preprocessing_full
+from LSTM_preprocessing import preprocessing_final
 from LSTM_loader import build_all_windows
 from LSTM_model import DengueLSTM
 from LSTM_rolling import make_fold_data, train_fold
 from config import (WINDOWSIZE, HIDDENSIZE, SPLIT_YEAR, SAVE_DIR, MODEL_FILENAME,
-                    VAL_RANGES, FIXED_EPOCHS, NUM_CLASSES, PURGE, CATEGORICAL_FEATURES, SEED)
-
+                    NUM_CLASSES, PURGE, CATEGORICAL_FEATURES, SEED, NUM_LAYERS,
+                    Dengue_dataset)
 '''
 **********************************************************************
 用途：檢查每個特徵對模型表現的影響力（Permutation Importance）
 原理：把某個特徵的值在樣本間打亂（其他特徵、時間結構不變），
       重新預測一次，看 Macro F1 掉多少。
-      掉得越多 → 代表模型越依賴這個特徵 → 越重要。
+      掉得越多 =>代表模型越依賴這個特徵 =>越重要。
 
-注意：類別型特徵（config.py 的 CATEGORICAL_FEATURES，如 Town、Month）
-      是 One-Hot 展開後的欄位，
-      單獨打亂其中一欄沒有意義，所以會把同一類別的所有欄位
-      綁在一起、同時打亂，評估「Town 整組」「Month 整組」這類整組的重要性。
+注意：類別型特徵會經過 OHE 展開，
+      故單獨打亂其中一欄沒有意義，所以會把同一類別的所有欄位
+      綁在一起、同時打亂，評估整組的重要性。
 
 兩種模式（MODE，見下方 __main__）：
   'fold2015'：借用 LSTM_rolling.py 裡「val=2015」那一折（train=2011-2014，
@@ -35,9 +34,11 @@ from config import (WINDOWSIZE, HIDDENSIZE, SPLIT_YEAR, SAVE_DIR, MODEL_FILENAME
               這次結果去做任何進一步的特徵取捨。
 **********************************************************************
 '''
+#設定中文字體
+plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei']
+plt.rcParams['axes.unicode_minus'] = False
 
 #把 One-Hot 展開的欄位歸併成同一組，其餘連續/二元特徵各自獨立一組
-#哪些是類別型特徵，統一從config.py的CATEGORICAL_FEATURES讀，不在這裡寫死
 _CATEGORY_LABELS = {'Town': 'Town（區域類別）', 'Month': 'Month（月份類別）'}
 
 def build_feature_groups(all_features):
@@ -117,7 +118,6 @@ def plot_importance(importances, label):
 
 def _prepare_fold2015(seed=12345):
     """訓練一個臨時模型（僅供特徵重要性分析用，不存檔），並回傳val=2015的評估資料"""
-    from get_Dengue import Dengue_dataset
 
     VAL_YEAR_FOR_IMPORTANCE = 2015   #唯一有足夠Level2樣本可以拿來看重要性的年份
     print(f"=== 用 val={VAL_YEAR_FOR_IMPORTANCE} 這一折訓練模型（僅供特徵重要性分析用） ===")
@@ -134,22 +134,19 @@ def _prepare_fold2015(seed=12345):
 def _prepare_test(device):
     """讀取已經訓練好、定案的正式模型，並回傳test集的評估資料"""
     model_path = f'{SAVE_DIR}/{MODEL_FILENAME}'
-    testyear = SPLIT_YEAR   #這裡要用數字（餵給 preprocessing_full 判斷年份），不是顯示用的文字標籤
+    testyear = SPLIT_YEAR
 
     print("=== 載入資料 ===")
     #跟主程式使用完全相同的切分與標準化，確保 test 特徵與模型訓練時一致。
-    if FIXED_EPOCHS is not None:
-        full_df, all_features, split_labels = preprocessing_final(split_year=testyear)
-    else:
-        full_df, all_features, split_labels = preprocessing_full(split_year=testyear, val_ranges=VAL_RANGES)
+    full_df, all_features, split_labels = preprocessing_final(split_year=testyear)
     X_all, y_all, target_idx = build_all_windows(full_df, all_features, 'RT_level', WINDOWSIZE,
                                                   split_labels=split_labels, purge=PURGE)
     test_mask = split_labels.loc[target_idx].values == 'test'
     X_test, y_test = X_all[test_mask], y_all[test_mask]
 
     print(f"=== 讀取模型記憶：{model_path} ===")
-    model = DengueLSTM(input_size=X_test.shape[2], hidden_size=HIDDENSIZE, num_layers=2,
-                        num_classes=NUM_CLASSES).to(device)
+    model = DengueLSTM(input_size=X_test.shape[2], hidden_size=HIDDENSIZE, num_layers=NUM_LAYERS, 
+                    num_classes=NUM_CLASSES).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
 
     label = str(testyear)
@@ -163,7 +160,7 @@ if __name__ == '__main__':
     #==============================================================
     MODE = 'fold2015'
     n_repeats = 5  # 想要結果更穩定可調大，但跑的時間會變長
-    seed = SEED    # fold2015模式下，換這個數字重跑可以檢查排序穩不穩
+    seed = SEED    
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

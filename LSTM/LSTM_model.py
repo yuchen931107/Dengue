@@ -3,81 +3,42 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-import copy
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 import seaborn as sns
-from sklearn.metrics import f1_score, confusion_matrix, classification_report
+from sklearn.metrics import confusion_matrix, classification_report
 from LSTM_loader import dengue_dataloader
 from set_seed import set_seed
 from config import (WINDOWSIZE, HIDDENSIZE, BATCH, GAMMA, LR, SPLIT_YEAR, TESTYEAR_LABEL,
-                    SAVE_DIR, MODEL_FILENAME, VAL_RANGES, NUM_CLASSES, LEVEL_NAMES)
-
-#【修正】matplotlib預設字型不含中文，圖表標題裡的中文字會顯示成方框□□□。
-#依序嘗試常見的中文字型，選第一個系統裡實際找得到的；若都沒有就印警告提醒安裝字型。
-_CJK_FONT_CANDIDATES = [
-    'Microsoft JhengHei', 'Microsoft YaHei', 'PingFang TC', 'PingFang SC',
-    'Noto Sans CJK TC', 'Noto Sans CJK SC', 'Noto Sans TC', 'SimHei',
-    'Heiti TC', 'WenQuanYi Zen Hei', 'Arial Unicode MS',
-]
-_available_fonts = {f.name for f in fm.fontManager.ttflist}
-_chosen_font = next((f for f in _CJK_FONT_CANDIDATES if f in _available_fonts), None)
-if _chosen_font:
-    plt.rcParams['font.sans-serif'] = [_chosen_font] + plt.rcParams.get('font.sans-serif', [])
-else:
-    print("[警告] 系統裡找不到常見中文字型，圖表中的中文可能顯示為方框。"
-          "建議安裝 Microsoft JhengHei（Windows）或 Noto Sans CJK TC（Mac/Linux）。")
-plt.rcParams['axes.unicode_minus'] = False   #避免中文字型底下，負號一起變成方框
+                    SAVE_DIR, MODEL_FILENAME, NUM_CLASSES, LEVEL_NAMES, FIXED_EPOCHS,
+                    NUM_LAYERS,DROPOUT,PATIENCE,MAX_EPOCH)
 
 from config import SEED
-
 set_seed(SEED)
 '''
-非函數可調參數:
-
-學習率:lr=0.001
-神經網路層數:num_layers=2
-防作弊斷線率:dropout=0.3
-smoothed_weights[i]*k
-'''
-# ==========================================
-# 1.核心架構定義區 (模型大腦 & 計分板)
-# ==========================================
-'''
-簡易套件寫法:
-model = nn.Sequential(
-    nn.LSTM(input_size=16, hidden_size=128),
-    nn.Dropout(0.3),
-    nn.Linear(128, 3)
-)
-'''
-
-'''
 nn.LSTM： AI的記憶區。會按照時間順序（連續 windowsize 週）讀取資料，把前幾週的氣候、蚊蟲資訊轉化成內部的記憶。
-nn.Dropout(0.3)：這是一個聰明的防作弊機制。它會在訓練時隨機把AI大腦裡30%的神經元關機。這會逼迫 AI不要過度依賴某些特定的特徵。
-nn.Linear：最後一層的分類器，把 LSTM 整理好的複雜記憶，濃縮成3個數字（代表預測3個等級的機率）。
+nn.Dropout(0.3)：這是一個防作弊機制。它會在訓練時隨機把AI大腦裡30%的神經元關機。這會逼迫 AI不要過度依賴某些特定的特徵。
+nn.Linear：把 LSTM 整理好的記憶，用 softmax 濃縮成3個機率
 '''
+# ==========================================
+# 1.核心架構定義區 (模型大腦 & Focal loss)
+# ==========================================
 class DengueLSTM(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, num_classes):
         super(DengueLSTM, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.dropout = nn.Dropout(0.3)
+        self.dropout = nn.Dropout(DROPOUT)
         self.fc = nn.Linear(hidden_size, num_classes)
 
     def forward(self, x):
         out, (h_n, c_n) = self.lstm(x)
-        final_state = out[:, -1, :]
+        final_state = out[:, -1, :]  # 取所有 batch、最後一個時間步、全部 hidden_size
         final_state = self.dropout(final_state)
         predictions = self.fc(final_state)
         return predictions
-'''
-alpha (偏心權重)：這是前面在 DataLoader裡算出來、用來對付資料不平衡的 weight。
-gamma (專注度因子)：它的作用是：如果 AI 覺得這題很簡單，就自動把這題的配分降到極低；逼迫 AI 把所有的算力集中在一直學不會的困難題目上。
-reduction：決定最後要把這個 batch的分數加總還是平均起來。
-'''
+
 class FocalLoss(nn.Module):
     def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
         super(FocalLoss, self).__init__()
@@ -86,70 +47,53 @@ class FocalLoss(nn.Module):
         self.reduction = reduction
 
     def forward(self, inputs, targets):
-        #【修正】原本用 F.cross_entropy(weight=alpha) 算出來的 ce_loss 已經乘過 alpha，
-        #再用 exp(-ce_loss) 算 pt，得到的不是乾淨的機率 p，而是 p 的 alpha 次方，
-        #導致「已經學會的簡單題該降權」這個機制失效（尤其對權重大的稀有類別影響最明顯）。
-        #修正做法：先用 log_softmax 算出不含 alpha 的乾淨 pt，做完降權，最後才乘上類別權重。
-        logp = F.log_softmax(inputs, dim=1)
+        #先用 log_softmax 算出不含 alpha 的乾淨 pt，做完降權，最後才乘上類別權重。
+        logp = F.log_softmax(inputs, dim=1) #將 logit 轉換為機率 pi=e^zi/sum(e^zj)
         logpt = logp.gather(1, targets.unsqueeze(1)).squeeze(1)
-        pt = logpt.exp()                              #乾淨的 p_t，不受 alpha 影響
-        focal_loss = ((1 - pt) ** self.gamma) * (-logpt)   #先做降權
+        pt = logpt.exp()                
+        focal_loss = ((1 - pt) ** self.gamma) * (-logpt)        
         if self.alpha is not None:
-            focal_loss = focal_loss * self.alpha[targets]   #再乘類別權重
+            focal_loss = focal_loss * self.alpha[targets]       
         if self.reduction == 'mean': return focal_loss.mean()
         elif self.reduction == 'sum': return focal_loss.sum()
         else: return focal_loss
 
-
 # ==========================================
 # 2.訓練與存檔函式
 # ==========================================
-def train_model(train_loader, val_loader, dim, weight, device,
-                hiddensize=HIDDENSIZE, gamma=GAMMA, EPOCHS=50, PATIENCE=7, 
-                save_dir=SAVE_DIR, fixed_epochs=None):
-    
-    # 決定訓練模式
-    if fixed_epochs is not None:
-        total_epochs = fixed_epochs
-        use_early_stopping = False
-        print(f"\n=== 2. 開始模型訓練 (模式: 固定輪數 = {total_epochs}) ===")
-    else:
-        total_epochs = EPOCHS
-        use_early_stopping = True
-        print(f"\n=== 2. 開始模型訓練 (模式: Early Stopping, 最多 {total_epochs} 輪) ===")
+def train_model(train_loader, dim, weight, device, epochs, val_loader=None, 
+                hiddensize=HIDDENSIZE,patience=7, gamma=GAMMA, save_dir=SAVE_DIR):
+    """
+    若有提供 val_loader，則使用 Early Stopping (最高輪數為 epochs)；
+    若未提供，則執行固定輪數 (Fixed Epochs) 訓練。
+    """
+    mode_str = "Early Stopping" if val_loader is not None else "固定輪數"
+    print(f"\n=== 2. 開始模型訓練 ({mode_str} 模式，最高輪數 = {epochs}) ===")
 
-    if use_early_stopping and val_loader is None:
-        raise ValueError("Early Stopping 模式需要 validation loader")
-    
-    #設定模型（等級數量統一由 config.py 的 NUM_CLASSES 決定）
-    model = DengueLSTM(input_size=dim, hidden_size=hiddensize, num_layers=2, num_classes=NUM_CLASSES).to(device)
+    #設定模型
+    model = DengueLSTM(input_size=dim, hidden_size=hiddensize, num_layers=NUM_LAYERS, num_classes=NUM_CLASSES).to(device)
 
-
-    #宣告權重(from loader)
+    #宣告權重(alpha)
     weights = weight.to(device)
 
-    #Focal Loss gamma參數可調整控制
+    #Focal Loss
     criterion = FocalLoss(alpha=weights, gamma=gamma)
 
-    #當模型猜錯時，Adam 負責指導神經網路要怎麼修改參數lr:learning rate
     #0.001 是 Adam 優化器業界公認的最佳初始值
     optimizer = optim.Adam(model.parameters(), lr=LR)
 
-    best_val_loss = float('inf') 
-    early_stop_counter = 0
-    best_model_weights = None
-    best_epoch = 0
-
-    #記錄每個epoch的train/val loss，訓練結束後畫成曲線圖，方便肉眼判斷過擬合的分岔點
+    #記錄每個 epoch 的 train loss 及 val loss。
     train_loss_history = []
     val_loss_history = []
+    
+    # Early stopping 初始化
+    best_val_loss = float('inf')
+    best_state = None
+    best_epoch = 0
+    stall = 0
 
-    # 如果有指定固定輪數，就跑固定輪數，不使用 early stopping
-    total_epochs = fixed_epochs if fixed_epochs is not None else EPOCHS
-    use_early_stopping = fixed_epochs is None
-
-    for epoch in range(total_epochs):
-        #【訓練】
+    for epoch in range(epochs):
+        #【訓練階段】
         model.train()  #設成訓練模式
         train_loss = 0.0    
         for batch_X, batch_y in train_loader:
@@ -162,82 +106,75 @@ def train_model(train_loader, val_loader, dim, weight, device,
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  
             optimizer.step()
             train_loss += loss.item()
-
+            
         avg_train_loss = train_loss / len(train_loader)
         train_loss_history.append(avg_train_loss)
-
-        if use_early_stopping:
-            #【驗證】只有 Early Stopping 模式使用 validation；固定輪數正式訓練不保留 2022。
+        
+        #【驗證與 Early Stopping 階段】
+        if val_loader is not None:
             model.eval()
             val_loss = 0.0
-            val_preds, val_targets = [], []
             with torch.no_grad():
                 for batch_X, batch_y in val_loader:
                     batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                     outputs = model(batch_X)
-                    val_loss += criterion(outputs, batch_y).item()
-                    _, predicted = torch.max(outputs.data, 1)
-                    val_preds.extend(predicted.cpu().numpy())
-                    val_targets.extend(batch_y.cpu().numpy())
-
+                    loss = criterion(outputs, batch_y)
+                    val_loss += loss.item()
+                    
             avg_val_loss = val_loss / len(val_loader)
-            macro_f1 = f1_score(val_targets, val_preds, average='macro', zero_division=0)
-            print(f'Epoch [{epoch+1}/{total_epochs}] | Train Loss: {avg_train_loss:.4f} | '
-                  f'Val Loss: {avg_val_loss:.4f} | Val Macro F1: {macro_f1:.4f}')
             val_loss_history.append(avg_val_loss)
-            '''if 連續 PATIENCE 個 Epoch val_loss都沒變更好就觸發Early Stopping並回溯'''
-            if avg_val_loss < best_val_loss:                                
-                best_val_loss = avg_val_loss                               
-                best_model_weights = copy.deepcopy(model.state_dict())
+            print(f'Epoch [{epoch+1}/{epochs}] | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}')
+            
+            # 檢查是否破紀錄
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
                 best_epoch = epoch + 1
-                early_stop_counter = 0
+                stall = 0
+                # 複製並儲存當下最佳的模型權重
+                best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
             else:
-                early_stop_counter += 1
-                if early_stop_counter >= PATIENCE:
-                    print(f"\n觸發 Early Stopping！模型在 Epoch {epoch+1} 提早停止訓練。")
+                stall += 1
+                if stall >= patience:
+                    print(f"\n連續 {patience} 輪 Val Loss 未下降，啟動 Early Stopping！")
+                    print(f"訓練中斷於第 {epoch+1} 輪，還原至最佳的第 {best_epoch} 輪權重。")
                     break
         else:
-            print(f'Epoch [{epoch+1}/{total_epochs}] | Train Loss: {avg_train_loss:.4f}')
-            #固定輪數模式下，每一輪都暫存權重（最後一輪就是最終權重）
-            best_model_weights = copy.deepcopy(model.state_dict())
-            best_epoch = epoch + 1
-
-    #畫出train/val loss曲線：兩條線開始分岔的地方，就是過擬合開始發生的位置
+            # Fixed Epoch 的模式
+            print(f'Epoch [{epoch+1}/{epochs}] | Train Loss: {avg_train_loss:.4f}')
+    
+    # 若有啟用 Early Stopping，訓練結束後必須將模型參數讀檔還原至 best_epoch
+    if val_loader is not None and best_state is not None:
+        model.load_state_dict(best_state)
+        
+          
+    #【繪製 Loss 曲線圖】
     plt.figure(figsize=(8, 5))
     epochs_ran = range(1, len(train_loss_history) + 1)
+    plt.plot(epochs_ran, train_loss_history, label='Train Loss', color='#4C72B0', linewidth=2)
 
-    plt.plot(epochs_ran, train_loss_history, label='Train Loss', color='#4C72B0')
-    if val_loss_history:
-        plt.plot(epochs_ran, val_loss_history, label='Val Loss', color='#C44E52')
-    if use_early_stopping and best_epoch > 0:
-        plt.axvline(best_epoch, color='gray', linestyle='--', linewidth=1,
-                    label=f'Best Epoch ({best_epoch})')
+    if val_loader is not None:
+        val_epochs_ran = range(1, len(val_loss_history) + 1)
+        plt.plot(val_epochs_ran, val_loss_history, label='Val Loss', color='#C44E52', linewidth=2)
+        # 畫出垂直虛線標示最佳輪數
+        plt.axvline(best_epoch, color='gray', linestyle='--', label=f'Best Epoch ({best_epoch})')
+        plt.title('Train vs Validation Loss Curve (Early Stopping)')
+    else:
+        plt.title('Train Loss Curve (Fixed Epochs)')
+
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title('Train / Val Loss Curve' if val_loss_history else 'Train Loss Curve')
     plt.legend()
     plt.tight_layout()
     plt.show()
 
-    #訓練結束，載入最好的權重並存檔
-    if best_model_weights is not None:
-        model.load_state_dict(best_model_weights)
-        print("已將模型權重恢復至最佳狀態。")
-        
-        # 自動建立資料夾並儲存模型
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-        
-        # 檔名統一從config.py讀，不在這裡自己重組一次
-        # （避免這裡的組法跟config.MODEL_FILENAME不同步，導致LSTM_importance.py讀不到檔案）
-        save_path = os.path.join(save_dir, MODEL_FILENAME)
-        torch.save(model.state_dict(), save_path)
-        print(f"模型參數已成功儲存至：{save_path}")
-        
-        return save_path
+    # 存檔並回傳路徑
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
 
-    print("警告：訓練過程中沒有產生可儲存的模型權重。")
-    return None
+    save_path = os.path.join(save_dir, MODEL_FILENAME)
+    torch.save(model.state_dict(), save_path)
+    print(f"模型參數已成功儲存至：{save_path}")
+    return save_path
 
 
 # ==========================================
@@ -247,7 +184,7 @@ def evaluate_model(model_path, test_loader, dim, hiddensize, device, testyear):
     print(f"\n=== 讀取模型記憶：{model_path} ===")
     
     #宣告空model（等級數量統一由 config.py 的 NUM_CLASSES 決定）
-    model = DengueLSTM(input_size=dim, hidden_size=hiddensize, num_layers=2, num_classes=NUM_CLASSES).to(device)
+    model = DengueLSTM(input_size=dim, hidden_size=hiddensize, num_layers=NUM_LAYERS, num_classes=NUM_CLASSES).to(device)
     
     #載入model
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
@@ -269,9 +206,6 @@ def evaluate_model(model_path, test_loader, dim, hiddensize, device, testyear):
     label_ids = list(range(NUM_CLASSES))
 
     print(f"\n分類報告 (Classification Report) — {testyear}:")
-    #用 output_dict 拿到結構化結果，把 accuracy、weighted avg 這兩列拿掉，只保留各等級與 macro avg
-    #明確指定labels：避免某個等級在這份資料裡剛好0筆（例如val集稀有等級樣本很少）
-    #導致報告類別數對不上target_names而報錯
     report_dict = classification_report(all_targets, all_preds, labels=label_ids,
                                          target_names=target_names,
                                          zero_division=0, output_dict=True)
@@ -279,7 +213,7 @@ def evaluate_model(model_path, test_loader, dim, hiddensize, device, testyear):
     report_df = report_df.drop(index=['accuracy', 'weighted avg'], errors='ignore')
     print(report_df.round(2))
 
-    #混淆矩陣（同樣明確指定labels，確保矩陣大小固定，跟xticklabels/yticklabels對得上）
+    #製作混淆矩陣
     cm = confusion_matrix(all_targets, all_preds, labels=label_ids)
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
@@ -293,57 +227,33 @@ def evaluate_model(model_path, test_loader, dim, hiddensize, device, testyear):
 
 
 # ==========================================
-# 4.主流程：訓練 → 評估 一次跑完
+# 4.主流程：訓練 → 評估 
 # ==========================================
-if __name__ == '__main__':
-    #==============================================================
-    #DEV_MODE=True ：試參數/挑特徵階段用，看的是val（開發用，非最終結果）
-    #DEV_MODE=False：所有設定都定案後，最後只切一次，看的才是真正的test結果
-    #==============================================================
-    DEV_MODE = False
-
-    #所有共用參數都改從 config.py 讀
-    from config import (BATCH, WINDOWSIZE, HIDDENSIZE, GAMMA, LR, SPLIT_YEAR, 
-                        TESTYEAR_LABEL, VAL_RANGES, FIXED_EPOCHS, SAVE_DIR)
+if __name__ == '__main__':               
+    print("=== 1. 載入資料與環境設定 ===")
     
-    batch = BATCH
-    windowsize = WINDOWSIZE
-    split_year = SPLIT_YEAR         
-    testyear = TESTYEAR_LABEL       
-    hiddensize = HIDDENSIZE
-    gamma = GAMMA
-
-    print(f"=== 1. 載入資料與環境設定 (FIXED_EPOCHS: {FIXED_EPOCHS}) ===")
-    # ... 略 ...
-    final_training = not DEV_MODE and FIXED_EPOCHS is not None
     train_loader, val_loader, test_loader, weight, dim = dengue_dataloader(
-        window_size=windowsize, batch_size=batch, split_year=split_year, val_ranges=VAL_RANGES,
-        final_training=final_training
+        window_size=WINDOWSIZE, batch_size=BATCH, split_year=SPLIT_YEAR
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    #決定要傳入的 Epoch 數量與印出的提示文字
+    actual_epochs = MAX_EPOCH if val_loader is not None else FIXED_EPOCHS
+    mode_info = f"Early Stopping (最高 {MAX_EPOCH} 輪)" if val_loader is not None else f"固定輪數 ({FIXED_EPOCHS} 輪)"
+    print(f"--- 當前訓練設定: {mode_info} ---")
+
     #訓練並取得存檔路徑
     save_path = train_model(
-        train_loader=train_loader, val_loader=val_loader, dim=dim,
-        weight=weight, device=device, hiddensize=hiddensize, gamma=gamma,
-        save_dir=SAVE_DIR, fixed_epochs=FIXED_EPOCHS
+        train_loader=train_loader, dim=dim, weight=weight, device=device, 
+        epochs=actual_epochs, val_loader=val_loader, patience=PATIENCE, 
+        hiddensize=HIDDENSIZE, gamma=GAMMA, save_dir=SAVE_DIR
     )
 
-
-
-    #依 DEV_MODE 決定評估用哪份資料：開發階段看val，最終定案才看test
-    if DEV_MODE:
-        eval_loader = val_loader
-        eval_label = "Validation（開發中，非最終結果）"
-    else:
-        eval_loader = test_loader
-        eval_label = f"Test Set: {testyear}"
-
-    #訓練成功才接著評估，避免 save_path 是 None 導致報錯
+    #訓練成功接著評估
     if save_path is not None:
         evaluate_model(
-            model_path=save_path, test_loader=eval_loader, dim=dim,
-            hiddensize=hiddensize, device=device, testyear=eval_label
+            model_path=save_path, test_loader=test_loader, dim=dim,
+            hiddensize=HIDDENSIZE, device=device, testyear=f"Test Set: {TESTYEAR_LABEL}"
         )
     else:
         print("因訓練未產生模型檔，跳過評估階段。")

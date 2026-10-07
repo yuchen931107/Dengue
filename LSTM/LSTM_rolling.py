@@ -6,36 +6,20 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 from sklearn.metrics import f1_score
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-
-from get_Dengue import Dengue_dataset
+from LSTM_preprocessing import _transform_features
 from LSTM_loader import build_all_windows, compute_weights
 from LSTM_model import DengueLSTM, FocalLoss
 from set_seed import set_seed
 from config import (WINDOWSIZE, HIDDENSIZE, BATCH, GAMMA, LR, NUM_CLASSES, SPLIT_YEAR, PURGE, 
-                    LEVEL_NAMES, CONTINUOUS_FEATURES, BINARY_FEATURES, CATEGORICAL_FEATURES, SEED)
-
+                    LEVEL_NAMES, CONTINUOUS_FEATURES, BINARY_FEATURES, CATEGORICAL_FEATURES, SEED,
+                    NUM_LAYERS, MAX_EPOCH, PATIENCE,Dengue_dataset)
 
 '''
 **********************************************************************
-Walk-forward（Rolling-origin）交叉驗證
-
+Walk-forward 滾動式交叉驗證
 用途：
-  之前一直卡住的問題是「2015是唯一有像樣稀有樣本的年份，
-  放進val就沒辦法留在train裡教模型」。這支程式解決這個死結：
-  每一折的驗證集只挑一年，其餘所有年份（含2015）都留在該折的訓練集裡。
-  2015只在「val=2015」那一折(第2折)缺席，其他8折它依然完整在train裡。
-
-  測試集(2023起)從頭到尾不會出現在這支程式的任何一折裡，
-  這支程式只負責告訴你「這組設定在9折上平均表現如何」，
-  用來挑超參數、比較做法；最終定案後，還是要另外用config.py
-  的正式設定（split_year前一年當val）重新訓練一次、拿test評估一次。
-
-  注意：這支程式的OHE/標準化是獨立寫的二份式版本（只有train/val），
-  沒有重用LSTM_preprocessing.py的_apply_ohe——因為那支函式設計成
-  一定要吃三份（含test），這裡沒有test可以給，sklearn對0筆資料
-  的transform會直接報錯。邏輯（train fit、val只transform）跟
-  LSTM_preprocessing.py完全一致，只是拿掉了test那一份。
+每一折的驗證集只挑一年，其餘驗證集之前的所有年份(val除外)都留在該折的訓練集裡。
+這支程式用來挑超參數、比較做法
 **********************************************************************
 '''
 
@@ -43,63 +27,22 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #第1折驗證=2014年（訓練=2011~2013），最後一折驗證=SPLIT_YEAR-1（即2022），測試集(2023起)全程不碰
 FOLD_VAL_YEARS = list(range(2014, SPLIT_YEAR))
-#統一從config.py讀，切FEATURE_SET就能跟LSTM_preprocessing.py同步，不用兩邊各自改一份
 CONT = CONTINUOUS_FEATURES
 BINARY = BINARY_FEATURES
 CATEGORICAL = CATEGORICAL_FEATURES
 
-
-def _apply_ohe_2way(train_raw, val_raw):
-    """跟LSTM_preprocessing._apply_ohe邏輯一致的二份式版本：只用train fit，val只transform。"""
-    #哪些欄位要One-Hot：統一從config.py讀（CATEGORICAL_FEATURES），不在這裡寫死
-    cols_to_encode = list(CATEGORICAL)
-    train_town = train_raw['Town'].values
-    val_town = val_raw['Town'].values
-
-    if cols_to_encode:
-        ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
-        train_ohe_arr = ohe.fit_transform(train_raw[cols_to_encode])
-        val_ohe_arr = ohe.transform(val_raw[cols_to_encode])
-        ohe_columns = list(ohe.get_feature_names_out(cols_to_encode))
-
-        train_ohe_df = pd.DataFrame(train_ohe_arr, columns=ohe_columns, index=train_raw.index)
-        val_ohe_df = pd.DataFrame(val_ohe_arr, columns=ohe_columns, index=val_raw.index)
-
-        train_df = pd.concat([train_raw.drop(columns=cols_to_encode), train_ohe_df], axis=1)
-        val_df = pd.concat([val_raw.drop(columns=cols_to_encode), val_ohe_df], axis=1)
-    else:
-        #這個特徵集不使用任何類別型特徵，就不做One-Hot（OneHotEncoder不能fit在0個欄位上）
-        ohe_columns = []
-        train_df, val_df = train_raw.copy(), val_raw.copy()
-
-    #Town不管有沒有被當成特徵，建滑動窗口時都要用它分組
-    train_df['Town'] = train_town
-    val_df['Town'] = val_town
-
-    ss = StandardScaler()
-    train_df[CONT] = ss.fit_transform(train_df[CONT])
-    val_df[CONT] = ss.transform(val_df[CONT])
-
-    all_features = CONT + BINARY + ohe_columns
-    return train_df, val_df, all_features
-
-
 def make_fold_data(df, val_year, window_size):
-    """
-    只用 Year < val_year 當train、Year == val_year 當val，
-    Year >= val_year+1 之後的年份完全不放進來（避免未來年份意外混進這一折）。
-    """
     fold_df = df[df['Year'] <= val_year].copy()
     train_raw = fold_df[fold_df['Year'] < val_year]
     val_raw = fold_df[fold_df['Year'] == val_year]
 
-    train_df, val_df, all_features = _apply_ohe_2way(train_raw, val_raw)
+    train_df, val_df, all_features = _transform_features(train_raw, val_raw)
     train_df = train_df.assign(_split='train')
     val_df = val_df.assign(_split='val')
     full_df = pd.concat([train_df, val_df]).sort_index()
     labels = full_df.pop('_split')
 
-    #embargo同樣套用在這一折的train/val邊界上，避免邊界窗口讓val分數虛高
+    #embargo同樣套用在 train/val 邊界上
     X, y, target_idx = build_all_windows(full_df, all_features, 'RT_level', window_size,
                                           split_labels=labels, purge=PURGE)
     lw = labels.loc[target_idx].values
@@ -108,11 +51,11 @@ def make_fold_data(df, val_year, window_size):
     return Xtr, ytr, Xva, yva, all_features
 
 
-def train_fold(Xtr, ytr, Xva, yva, dim, seed, epochs=50, patience=7, quiet=True):
+def train_fold(Xtr, ytr, Xva, yva, dim, seed, epochs=MAX_EPOCH, patience=PATIENCE, quiet=True):
     """訓練一折，回傳「val loss最低」那一輪的模型、best_epoch、以及該輪的macro F1與各級F1。"""
     set_seed(seed)
     weights = torch.tensor(compute_weights(ytr, NUM_CLASSES), dtype=torch.float32).to(DEVICE)
-    model = DengueLSTM(input_size=dim, hidden_size=HIDDENSIZE, num_layers=2, num_classes=NUM_CLASSES).to(DEVICE)
+    model = DengueLSTM(input_size=dim, hidden_size=HIDDENSIZE, num_layers=NUM_LAYERS, num_classes=NUM_CLASSES).to(DEVICE)
     criterion = FocalLoss(alpha=weights, gamma=GAMMA)
     optimizer = optim.Adam(model.parameters(), lr=LR)
 
@@ -162,9 +105,7 @@ def train_fold(Xtr, ytr, Xva, yva, dim, seed, epochs=50, patience=7, quiet=True)
             preds.append(model(bx.to(DEVICE)).argmax(1).cpu().numpy())
     preds = np.concatenate(preds)
 
-    macro_f1 = f1_score(yva, preds, average='macro', zero_division=0, labels=list(range(NUM_CLASSES)))
-    per_class = f1_score(yva, preds, average=None, zero_division=0, labels=list(range(NUM_CLASSES)))
-    # 【新增】只平均「這一折實際存在」的類別
+    #只平均「這一折實際存在」的類別
     present = sorted(set(yva.tolist()))
     macro_f1 = f1_score(yva, preds, average='macro', zero_division=0, labels=present)
     per_class = f1_score(yva, preds, average=None, zero_division=0, labels=list(range(NUM_CLASSES)))
@@ -187,7 +128,7 @@ def run_rolling_cv(seed=1234, epochs=50, patience=7):
             continue
 
         dim = Xtr.shape[2]
-        # 接收新增的 n_pos
+        #接收新增的 n_pos
         _, best_epoch, macro_f1, per_class, n_pos = train_fold(Xtr, ytr, Xva, yva, dim, seed, epochs, patience)
 
         rows.append({
@@ -198,7 +139,7 @@ def run_rolling_cv(seed=1234, epochs=50, patience=7):
             'best_epoch': best_epoch,
             'macro_f1': macro_f1,
             'per_class': np.round(per_class, 3).tolist(),
-            'n_pos': n_pos.tolist(),  # 【新增】把這一折各級別的實際筆數存起來
+            'n_pos': n_pos.tolist(),
         })
         elapsed = time.time() - t0
         print(f"[第{len(rows)}折] val={val_year} (train=2011-{val_year-1}) | "
@@ -211,15 +152,15 @@ def run_rolling_cv(seed=1234, epochs=50, patience=7):
 
 def summarise(result_df):
     macro = result_df['macro_f1'].to_numpy()
-    per_class_matrix = np.stack(result_df['per_class'].to_list())   #shape: (折數, NUM_CLASSES)
-    n_pos_matrix = np.stack(result_df['n_pos'].to_list())           # 【新增】取出各折各類別筆數
+    per_class_matrix = np.stack(result_df['per_class'].to_list())   
+    n_pos_matrix = np.stack(result_df['n_pos'].to_list())           
 
     print("\n" + "=" * 60)
     print(f"=== {len(result_df)} 折平均結果 ===")
     print(f"Macro F1： {macro.mean():.4f} ± {macro.std(ddof=1):.4f}")
     
     for i, name in enumerate(LEVEL_NAMES):
-        # 【修改】只挑出「該折驗證集確實有這個類別 (n_pos > 0)」的成績來平均
+        #只挑出「該折驗證集確實有這個類別 (n_pos > 0)」的成績來平均
         valid_folds_mask = n_pos_matrix[:, i] > 0
         if valid_folds_mask.sum() > 0:
             col_valid = per_class_matrix[valid_folds_mask, i]
@@ -232,7 +173,7 @@ def summarise(result_df):
     print("   拿來挑超參數/比較做法；最終定案後仍須另外用完整train重新訓練、跑一次test。")
 
 if __name__ == '__main__':
-    result_df = run_rolling_cv(seed=SEED, epochs=50, patience=7)
+    result_df = run_rolling_cv(seed=SEED, epochs=MAX_EPOCH, patience=PATIENCE)
 
     print("\n=== 各折明細 ===")
     print(result_df[['val_year', 'train_years', 'n_train', 'n_val', 'best_epoch', 'macro_f1']]

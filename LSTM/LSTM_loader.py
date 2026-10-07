@@ -2,30 +2,24 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import TensorDataset, DataLoader
-from LSTM_preprocessing import preprocessing_final, preprocessing_full
+from LSTM_preprocessing import preprocessing_final
 from config import NUM_CLASSES, PURGE, WINDOWSIZE, BATCH, SPLIT_YEAR
 
 '''
 **********************************************************************
-回傳值:
-train_loader: train DataLoader
-val_loader:   validation DataLoader
-test_loader:  test DataLoader
-weights: 處理類別不平衡的權重 Tensor (給 Loss function 用)
-dim: 模型輸入的特徵維度大小
-
-設計原則（重要）：
-先對「整個」時序（不分 train/val/test）建立所有時間連續的滑動窗口，
-每個窗口只依「target 那一週」落在哪個日期範圍，分配到 train/val/test。
-這樣即使某個窗口的「特徵歷史」往前借用了另一個切分的資料，也沒關係，
-因為那只是拿過去已發生的天氣/病媒資料當輸入，不會用到任何其他切分
-自己的 label——這是時間序列預測的標準做法，也是為了避免「切分邊界
-附近的資料因為缺少前情提要而被迫捨棄」這個問題（尤其是像 2015 下半年
-這種刻意挑選的爆發段，開頭幾週最容易被誤傷）。
+資料打包
+compute_weights   : 計算 Focal loss 的 alpha
+build_all_windows : 打包成 X+y 的 型態
+dengue_dataloader : 切分資料集、計算權重並封裝 batch 成各 DataLoader
 **********************************************************************
 '''
-#計算權重：純公式化 sqrt(class weight balanced)，完全依訓練集樣本數自動決定，不做任何人工調整
-#（避免用test表現去回頭調整權重，造成間接使用測試集資訊的問題）
+
+'''
+計算 Focal Loss 使用的類別權重 (Alpha)，處理資料極端不平衡問題：
+1. 樣本統計：清點訓練集中各疫情等級的實際數量。
+2. 反比平衡：套用公式 Total / (Num_Classes * Class_Count) 確保各類別對總 Loss 的理論貢獻度相等，數量越少的類別權重越高。
+3. 平滑化處理：將上述平衡權重開平方根 sqrt(Balanced)，防止極度稀少類別（如 Level 2）獲得暴衝的權重，避免模型過度反應與誤報。
+'''
 def compute_weights(y_train, num_classes):
     counts = np.bincount(y_train, minlength=num_classes).astype(np.float64)
     total = counts.sum()
@@ -34,43 +28,17 @@ def compute_weights(y_train, num_classes):
     return weights
 
 
-#(舊版/單一 DataFrame 用) 對單一切分好的 DataFrame 建立滑動窗口，含時間連續性檢查
-#適用情境：資料本身就是連續時間軸的單一區塊（例如 feature importance 只需要 test_df）
-#若要切出中段不連續的 val（如 2015下半年+2022），請改用下面的 build_all_windows + preprocessing_full
-def create_time_windows(data, feature_cols, target_col, window_size):
-    X, y = [], []
-    data = data.copy()
-    data['_week_dt'] = pd.to_datetime(data['Week'])
-
-    skipped = 0
-    for _, group in data.groupby('Town'):
-        group = group.sort_values('_week_dt').reset_index(drop=True)
-        for i in range(len(group) - window_size):
-            span = group.iloc[i : i + window_size + 1]
-            week_diffs = span['_week_dt'].diff().dropna()
-            if not (week_diffs == pd.Timedelta(days=7)).all():
-                skipped += 1
-                continue
-            X.append(group.iloc[i : i + window_size][feature_cols].values)
-            y.append(group.iloc[i + window_size][target_col])
-
-    if skipped > 0:
-        print(f"[create_time_windows] 偵測到時間斷層，已跳過 {skipped} 個不連續窗口")
-
-    return np.array(X), np.array(y)
-
-
-#對「整個」資料集建立所有時間連續的滑動窗口，並記錄每個窗口 target 那一列的原始 index
-#split_labels/purge：開啟 embargo 時，會丟掉「輸入週跨越切分邊界」的窗口（見下方說明）
+#對整個資料集建立所有時間連續的滑動窗口
 def build_all_windows(data, feature_cols, target_col, window_size, split_labels=None, purge=False):
     X, y, target_index = [], [], []
     data = data.copy()
     data['_week_dt'] = pd.to_datetime(data['Week'])
     data = data.reset_index().rename(columns={'index': '_orig_idx'})
 
-    skipped_gap = 0      #時間斷層（週與週之間不是剛好7天）
-    skipped_purge = {}   #embargo：輸入跨切分邊界，依 target 所屬切分分別統計
+    skipped_gap = 0      #時間斷層計數
+    skipped_purge = {}   #embargo
 
+    #於同一區的資料開始滑動建置窗口
     for _, group in data.groupby('Town'):
         group = group.sort_values('_week_dt').reset_index(drop=True)
         for i in range(len(group) - window_size):
@@ -81,11 +49,7 @@ def build_all_windows(data, feature_cols, target_col, window_size, split_labels=
                 skipped_gap += 1
                 continue
 
-            #【embargo】檢查窗口的「輸入週」跟「target週」是不是都屬於同一個切分。
-            #若不是，代表這個窗口的輸入有一部分來自別的切分：
-            #例如 val 從 2015/10/01 開始，預測 10/03 的窗口輸入是 8/29~9/26（幾乎全在 train），
-            #它跟 train 裡預測 9/26 的窗口有 5 週輸入重疊 —— 模型訓練時等於看過幾乎一樣的東西，
-            #會讓驗證分數虛高。開啟 purge 就把這種跨界窗口整個丟掉。
+            #檢查窗口的「輸入週」跟「target週」是不是都屬於同一個切分。
             if purge and split_labels is not None:
                 span_splits = split_labels.loc[span['_orig_idx'].values].values
                 if len(set(span_splits)) > 1:
@@ -108,50 +72,30 @@ def build_all_windows(data, feature_cols, target_col, window_size, split_labels=
 
 
 #建立 DataLoader
-def dengue_dataloader(window_size=WINDOWSIZE, batch_size=BATCH, split_year=SPLIT_YEAR, val_ranges=None,
-                      purge=PURGE, final_training=False):
-    """
-    權重固定採用公式化 sqrt(class weight balanced)，不提供手動調整選項。
+def dengue_dataloader(window_size=WINDOWSIZE, batch_size=BATCH, split_year=SPLIT_YEAR, purge=PURGE):
+    full_df, all_features, split_labels = preprocessing_final(split_year=split_year)
 
-    val_ranges: 預設 None（單純用 split_year 前一年當 val）。
-                若要自訂驗證集區間，傳入 [(start, end), ...] 日期字串 list，
-                例如 [('2015-10-01','2015-12-31'), ('2022-01-01','2022-12-31')]。
-                「窗口是哪個切分」永遠只看 target 那一週的日期。
-
-    purge:      是否啟用 embargo（切分邊界留空檔）。
-                預設 True：丟掉「輸入週跨越切分邊界」的窗口，避免驗證/測試集裡出現
-                跟訓練集高度重疊的邊界樣本，導致分數虛高。
-
-    final_training: True 時不切 validation，將 split_year 前的全部資料用於固定輪數正式訓練。
-    """
-    if final_training:
-        full_df, all_features, split_labels = preprocessing_final(split_year=split_year)
-    else:
-        full_df, all_features, split_labels = preprocessing_full(split_year=split_year, val_ranges=val_ranges)
-
-    #對整個資料集一次建好所有合法窗口（purge=True 時同時套用 embargo）
+    #對整個資料集一次建好所有合法窗口
     X_all, y_all, target_idx = build_all_windows(full_df, all_features, 'RT_level', window_size,
                                                   split_labels=split_labels, purge=purge)
 
-    #依照每個窗口 target 那一列原本被標記的切分（train/val/test），分配窗口歸屬
+    #依照每個窗口 target 那一列原本被標記的切分，分配窗口歸屬
     labels_for_windows = split_labels.loc[target_idx].values
 
     train_mask = labels_for_windows == 'train'
-    val_mask   = labels_for_windows == 'val'
     test_mask  = labels_for_windows == 'test'
+    val_mask   = labels_for_windows == 'val'
 
     X_train, y_train = X_all[train_mask], y_all[train_mask]
-    X_val,   y_val   = X_all[val_mask],   y_all[val_mask]
     X_test,  y_test  = X_all[test_mask],  y_all[test_mask]
 
     #(防錯)
     assert len(X_train) > 0, f"訓練集樣本為空，請檢查 split_year={split_year} 設定"
-    if not final_training:
-        assert len(X_val) > 0, f"驗證集樣本為空，請檢查 val_ranges/{split_year} 設定"
     assert len(X_test)  > 0, f"測試集樣本為空，請檢查 split_year={split_year} 設定"
 
     dim = X_train.shape[2]
 
+    #轉換成 PyTorch 可讀取運算的結構
     X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
     X_test_tensor  = torch.tensor(X_test,  dtype=torch.float32)
     y_train_tensor = torch.tensor(y_train, dtype=torch.long)
@@ -159,17 +103,20 @@ def dengue_dataloader(window_size=WINDOWSIZE, batch_size=BATCH, split_year=SPLIT
 
     weights = torch.tensor(compute_weights(y_train, NUM_CLASSES), dtype=torch.float32)
 
+    #合併 X、y
     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
     test_dataset  = TensorDataset(X_test_tensor,  y_test_tensor)
 
+    #打包成 batch
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader  = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
-
-    if final_training:
-        val_loader = None
-    else:
-        val_dataset = TensorDataset(torch.tensor(X_val, dtype=torch.float32),
-                                    torch.tensor(y_val, dtype=torch.long))
+    
+    #如果有 val 資料，建立 val_loader
+    val_loader = None
+    if val_mask.any():
+        X_val, y_val = X_all[val_mask], y_all[val_mask]
+        val_dataset = TensorDataset(torch.tensor(X_val, dtype=torch.float32), torch.tensor(y_val, dtype=torch.long))
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     return train_loader, val_loader, test_loader, weights, dim
+
